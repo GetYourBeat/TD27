@@ -1,6 +1,7 @@
 import Foundation
 
-/// Narrow allowlist from controlled hardware captures. Not a general TD-27 map.
+/// Hardware-observed snare addresses; documented user-sample ranges.
+/// This remains a restricted kit-76 test, not a general TD-27 map.
 enum TD27USBTest {
     enum Zone: String, CaseIterable, Identifiable, Codable {
         case head = "Snare Head", rim = "Snare Rim"
@@ -11,7 +12,30 @@ enum TD27USBTest {
         case pitch = "Pitch", decay = "Decay"
         var id: String { rawValue }
         var offset: Int { self == .pitch ? 1 : 3 }
-        var values: [Int] { self == .pitch ? [0, 25, 30] : [81, 100] }
+        // Roland TD-27 Data List eng02, page 7: USER SAMPLE Pitch/Decay.
+        var range: ClosedRange<Int> { self == .pitch ? -100...100 : 1...100 }
+        var defaultValue: Int { self == .pitch ? 0 : 100 }
+
+        func parseInput(_ text: String) -> Int? {
+            let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "−", with: "-")
+            guard let value = Int(normalized), range.contains(value) else { return nil }
+            return value
+        }
+
+        func encode(_ value: Int) -> [UInt8]? {
+            guard range.contains(value) else { return nil }
+            // Hardware read: -25 -> E7, transmitted as the nibbles 0E 07.
+            let raw = self == .pitch ? UInt8(bitPattern: Int8(value)) : UInt8(value)
+            return [raw >> 4, raw & 0x0F]
+        }
+
+        func decode(_ bytes: [UInt8]) -> Int? {
+            guard bytes.count == 2, bytes.allSatisfy({ $0 < 16 }) else { return nil }
+            let raw = bytes[0] << 4 | bytes[1]
+            let value = self == .pitch ? Int(Int8(bitPattern: raw)) : Int(raw)
+            return range.contains(value) ? value : nil
+        }
     }
     struct Snapshot: Codable, Equatable {
         let kitName: String
@@ -22,8 +46,8 @@ enum TD27USBTest {
         func block(_ zone: Zone) -> [UInt8] { zone == .head ? head : rim }
         func value(_ zone: Zone, _ parameter: Parameter) -> Int? {
             let bytes = block(zone), i = parameter.offset
-            guard bytes.count == 5, bytes[i] < 16, bytes[i+1] < 16 else { return nil }
-            return Int(bytes[i]) * 16 + Int(bytes[i+1])
+            guard bytes.count == 5 else { return nil }
+            return parameter.decode(Array(bytes[i...i+1]))
         }
         var isSupported: Bool {
             guard head.count == 5, rim.count == 5,
@@ -31,15 +55,13 @@ enum TD27USBTest {
                   headInstrument[8] == 1, rimInstrument[8] == 1 else { return false }
             return Zone.allCases.allSatisfy { zone in
                 Parameter.allCases.allSatisfy { parameter in
-                    guard let v = value(zone, parameter) else { return false }
-                    return parameter.values.contains(v)
+                    value(zone, parameter) != nil
                 }
             }
         }
         func changing(_ zone: Zone, _ parameter: Parameter, to value: Int) -> Snapshot? {
-            guard isSupported, parameter.values.contains(value) else { return nil }
+            guard isSupported, let data = parameter.encode(value) else { return nil }
             var h = head, r = rim
-            let data = [UInt8(value / 16), UInt8(value % 16)]
             if zone == .head { h.replaceSubrange(parameter.offset...parameter.offset+1, with: data) }
             else { r.replaceSubrange(parameter.offset...parameter.offset+1, with: data) }
             return Snapshot(kitName: kitName, head: h, rim: r,
@@ -56,10 +78,9 @@ enum TD27USBTest {
         let before: Snapshot
     }
     static func frame(kit: Int, zone: Zone, parameter: Parameter, value: Int) -> [UInt8]? {
-        // Only kit 76, device 0x10, two snare zones and observed positive values.
-        guard kit == 76, parameter.values.contains(value) else { return nil }
-        let payload: [UInt8] = [0x05, 0x17, zone.index, UInt8(parameter.offset),
-                                UInt8(value / 16), UInt8(value % 16)]
+        // Only kit 76, device 0x10 and the two measured snare zones.
+        guard kit == 76, let data = parameter.encode(value) else { return nil }
+        let payload: [UInt8] = [0x05, 0x17, zone.index, UInt8(parameter.offset)] + data
         let sum = payload.reduce(0) { $0 + Int($1) }
         return [0xF0, 0x41, 0x10, 0, 0, 0, 0x63, 0x12] + payload
             + [UInt8((128 - sum % 128) % 128), 0xF7]

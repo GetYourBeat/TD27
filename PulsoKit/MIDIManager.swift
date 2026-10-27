@@ -1874,7 +1874,8 @@ final class MIDIManager: ObservableObject {
     @Published private(set) var usbTestReady = false
     @Published private(set) var usbTestCanRestore = false
     @Published private(set) var usbTestBackupURL: URL?
-    private var usbTestSnapshot: TD27USBTest.Snapshot?
+    @Published private(set) var usbTestSnapshot: TD27USBTest.Snapshot?
+    @Published private(set) var usbTestReadRevision = 0
     private var usbTestUndo: TD27USBTest.Backup?
     private var usbTestIdentityID: UInt8?
     private var usbTestTask: Task<Void, Never>?
@@ -1972,13 +1973,13 @@ final class MIDIManager: ObservableObject {
                 self.moduleDeviceID = 0x10
                 let before = try await snapshot()
                 guard before.isSupported else {
-                    throw USBTestError(message: "Test benötigt User-Samples auf beiden Snare-Zonen und beobachtete Werte (Pitch 0/25/30; Decay 81/100).")
+                    throw USBTestError(message: "Test benötigt User-Samples auf beiden Snare-Zonen und gültige Werte (Pitch −100…100; Decay 1…100).")
                 }
                 var result = before
                 if let (zone, parameter, value) = change {
                     guard let expected = before.changing(zone, parameter, to: value),
                           let frame = TD27USBTest.frame(kit: 76, zone: zone, parameter: parameter, value: value) else {
-                        throw USBTestError(message: "Wert außerhalb der bestätigten Testfreigabe.")
+                        throw USBTestError(message: "Wert außerhalb des zulässigen Bereichs.")
                     }
                     if restoring {
                         guard let undo, before.kitName == undo.before.kitName,
@@ -2018,6 +2019,7 @@ final class MIDIManager: ObservableObject {
                     if restoring { self.usbTestCanRestore = false; self.usbTestUndo = nil }
                 }
                 self.usbTestSnapshot = result
+                self.usbTestReadRevision &+= 1
                 self.usbTestReady = true
                 let prefix = change == nil ? "Gelesen" : "Schreibwert durch Rücklesen bestätigt"
                 self.usbTestStatus = "\(prefix): Kit 76 \(result.kitName) · Head Pitch \(result.value(.head, .pitch)!) / Decay \(result.value(.head, .decay)!) · Rim Pitch \(result.value(.rim, .pitch)!) / Decay \(result.value(.rim, .decay)!)"
