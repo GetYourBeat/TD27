@@ -1117,6 +1117,7 @@ struct ContentView: View {
     private var logTab: some View {
         VStack(alignment: .leading, spacing: 8) {
             if midi.profile.kind == .td27 {
+                TD27USBTestView()
                 HStack {
                     Stepper("Diagnose-Kit: \(diagnosticKitNumber)", value: $diagnosticKitNumber, in: 1...100)
                         .frame(width: 210)

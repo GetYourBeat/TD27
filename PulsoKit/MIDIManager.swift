@@ -1044,7 +1044,7 @@ final class MIDIManager: ObservableObject {
     }
 
     var isOperationInProgress: Bool {
-        isBusyWithSysEx || isAuditioningKit
+        isBusyWithSysEx || isAuditioningKit || usbTestTask != nil
     }
 
     /// Czy wolno rozpocząć pojedyncze przywrócenie z kopii.
@@ -1294,6 +1294,7 @@ final class MIDIManager: ObservableObject {
             kitListScanTask?.cancel()
             initialReadTask?.cancel()
             probeTask?.cancel()
+            usbTestTask?.cancel()
             needsKitReconcile = false
             kitListProgress = 0
         }
@@ -1790,6 +1791,7 @@ final class MIDIManager: ObservableObject {
     /// przerwanie musi gasić jedno i drugie niezależnie od tego, która
     /// z nich trwa. Zostawiona flaga blokuje cały program.
     func cancelProbe() {
+        usbTestTask?.cancel()
         probeTask?.cancel()
         probeTask = nil
         setupDumpActive = false
@@ -1865,6 +1867,166 @@ final class MIDIManager: ObservableObject {
             }
             self.status = self.connectionDiagnostic
             self.appendLog("DIAGNOSTIC: \(self.connectionDiagnostic)")
+        }
+    }
+
+    @Published private(set) var usbTestStatus = "Noch nicht ausgelesen"
+    @Published private(set) var usbTestReady = false
+    @Published private(set) var usbTestCanRestore = false
+    @Published private(set) var usbTestBackupURL: URL?
+    private var usbTestSnapshot: TD27USBTest.Snapshot?
+    private var usbTestUndo: TD27USBTest.Backup?
+    private var usbTestIdentityID: UInt8?
+    private var usbTestTask: Task<Void, Never>?
+
+    private struct USBTestError: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
+
+    func readTD27USBTest() { runTD27USBTest(change: nil, restoring: false) }
+    func writeTD27USBTest(zone: TD27USBTest.Zone, parameter: TD27USBTest.Parameter, value: Int) {
+        guard usbTestReady else { return }
+        runTD27USBTest(change: (zone, parameter, value), restoring: false)
+    }
+    func restoreTD27USBTest() {
+        guard usbTestCanRestore, let undo = usbTestUndo,
+              let value = undo.before.value(undo.zone, undo.parameter) else { return }
+        runTD27USBTest(change: (undo.zone, undo.parameter, value), restoring: true)
+    }
+    func revealTD27USBBackup() {
+        if let url = usbTestBackupURL { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+    }
+
+    private func runTD27USBTest(
+        change: (TD27USBTest.Zone, TD27USBTest.Parameter, Int)?, restoring: Bool
+    ) {
+        guard profile.kind == .td27, !isOperationInProgress,
+              let input = selectedInputID, let output = selectedOutputID,
+              connectedInput != nil,
+              inputs.first(where: { $0.id == input })?.name.localizedCaseInsensitiveContains("TD-27") == true,
+              outputs.first(where: { $0.id == output })?.name.localizedCaseInsensitiveContains("TD-27") == true
+        else {
+            usbTestStatus = "TD-27 als MIDI-Eingang UND Ausgang wählen; laufende Operation abwarten."
+            return
+        }
+        let previouslyRead = usbTestSnapshot
+        let undo = usbTestUndo
+        usbTestReady = false
+        isDumpingSetup = true
+        setupDumpActive = true
+        usbTestIdentityID = nil
+        usbTestStatus = "TD-27 und Ausgangswerte werden geprüft…"
+        usbTestTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.diagnosticAddress = nil
+                self.diagnosticData = nil
+                self.setupDumpActive = false
+                self.isDumpingSetup = false
+                self.usbTestTask = nil
+            }
+            func checkConnection() throws {
+                try Task.checkCancellation()
+                guard self.profile.kind == .td27, self.selectedInputID == input,
+                      self.selectedOutputID == output, self.connectedInput != nil else {
+                    throw USBTestError(message: "MIDI-Verbindung geändert. Bitte neu auslesen.")
+                }
+            }
+            func read(_ address: [UInt8], count: Int) async throws -> [UInt8] {
+                try checkConnection()
+                self.diagnosticAddress = address
+                self.diagnosticData = nil
+                self.sendRQ1(address: address, size: [0, 0, 0, UInt8(count)])
+                guard !self.lastSendFailed else { throw USBTestError(message: "MIDI-Senden fehlgeschlagen.") }
+                for _ in 0..<40 {
+                    try await Task.sleep(for: .milliseconds(50))
+                    try checkConnection()
+                    if let data = self.diagnosticData {
+                        guard data.count == count else { throw USBTestError(message: "Unvollständige Antwort; kein weiterer Schreibzugriff.") }
+                        return data
+                    }
+                }
+                throw USBTestError(message: "Keine passende Antwort; kein weiterer Schreibzugriff.")
+            }
+            func snapshot() async throws -> TD27USBTest.Snapshot {
+                let name = try await read([5, 0x16, 0, 0], count: 12)
+                let hi = try await read([5, 0x16, 0x41, 0], count: 9)
+                let ri = try await read([5, 0x16, 0x42, 0], count: 9)
+                let head = try await read([5, 0x17, 1, 0], count: 5)
+                let rim = try await read([5, 0x17, 2, 0], count: 5)
+                return TD27USBTest.Snapshot(kitName: String(bytes: name, encoding: .ascii) ?? "?",
+                                           head: head, rim: rim, headInstrument: hi, rimInstrument: ri)
+            }
+            do {
+                self.sendSysEx([0xF0, 0x7E, 0x7F, 0x06, 0x01, 0xF7])
+                for _ in 0..<40 {
+                    try await Task.sleep(for: .milliseconds(50))
+                    try checkConnection()
+                    if self.usbTestIdentityID != nil { break }
+                }
+                guard self.usbTestIdentityID == 0x10 else {
+                    throw USBTestError(message: "Keine frische TD-27-Antwort mit Device ID 16. Schreiben gesperrt.")
+                }
+                // Fresh, model-specific identity establishes the expected device for this transaction.
+                self.moduleDeviceID = 0x10
+                let before = try await snapshot()
+                guard before.isSupported else {
+                    throw USBTestError(message: "Test benötigt User-Samples auf beiden Snare-Zonen und beobachtete Werte (Pitch 0/25/30; Decay 81/100).")
+                }
+                var result = before
+                if let (zone, parameter, value) = change {
+                    guard let expected = before.changing(zone, parameter, to: value),
+                          let frame = TD27USBTest.frame(kit: 76, zone: zone, parameter: parameter, value: value) else {
+                        throw USBTestError(message: "Wert außerhalb der bestätigten Testfreigabe.")
+                    }
+                    if restoring {
+                        guard let undo, before.kitName == undo.before.kitName,
+                              before.headInstrument == undo.before.headInstrument,
+                              before.rimInstrument == undo.before.rimInstrument else {
+                            throw USBTestError(message: "Kit oder Samples seit Sicherung geändert. Rücksetzen gesperrt.")
+                        }
+                    } else {
+                        guard previouslyRead == before else {
+                            throw USBTestError(message: "Werte seit dem Auslesen geändert. Bitte erneut lesen und prüfen.")
+                        }
+                    }
+                    let backup = TD27USBTest.Backup(date: Date(), kitNumber: 76, deviceID: 0x10,
+                                                   zone: zone, parameter: parameter, requestedValue: value, before: before)
+                    let folder = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
+                                                            appropriateFor: nil, create: true)
+                        .appendingPathComponent("TD27StudioV3/USB-ParameterBackups", isDirectory: true)
+                    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                    let url = folder.appendingPathComponent("kit76-\(UUID().uuidString).json")
+                    let bytes = try JSONEncoder().encode(backup)
+                    try bytes.write(to: url, options: .withoutOverwriting)
+                    guard try Data(contentsOf: url) == bytes else {
+                        throw USBTestError(message: "Sicherung konnte nicht verifiziert werden. Kein Schreibzugriff.")
+                    }
+                    self.usbTestBackupURL = url
+                    if !restoring { self.usbTestUndo = backup; self.usbTestCanRestore = true }
+                    try checkConnection()
+                    // Explicit allowlisted exception; global hasVerifiedMap/allowsWriting stays false.
+                    self.appendLog("USB TEST: backed up; kit 76, \(zone.rawValue), \(parameter.rawValue) -> \(value)")
+                    self.sendSysEx(frame)
+                    guard !self.lastSendFailed else { throw USBTestError(message: "Schreiben fehlgeschlagen; Sicherung bleibt erhalten.") }
+                    try await Task.sleep(for: .milliseconds(150))
+                    result = try await snapshot()
+                    guard result == expected else {
+                        throw USBTestError(message: "Rücklesen weicht ab (auch andere Zone geprüft). Nicht bestätigt! Sicherung bleibt erhalten; keine automatische Wiederholung.")
+                    }
+                    if restoring { self.usbTestCanRestore = false; self.usbTestUndo = nil }
+                }
+                self.usbTestSnapshot = result
+                self.usbTestReady = true
+                let prefix = change == nil ? "Gelesen" : "Schreibwert durch Rücklesen bestätigt"
+                self.usbTestStatus = "\(prefix): Kit 76 \(result.kitName) · Head Pitch \(result.value(.head, .pitch)!) / Decay \(result.value(.head, .decay)!) · Rim Pitch \(result.value(.rim, .pitch)!) / Decay \(result.value(.rim, .decay)!)"
+                self.appendLog("USB TEST: \(self.usbTestStatus)")
+            } catch {
+                self.usbTestReady = false
+                self.usbTestStatus = error.localizedDescription
+                self.appendLog("USB TEST: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -3500,6 +3662,8 @@ final class MIDIManager: ObservableObject {
     }
 
     private func sendDT1(address: [UInt8], data: [UInt8]) {
+        // General editor write gate. The separate TD27USBTest transaction has
+        // a narrow hardware-observed allowlist and mandatory backup/readback.
         // Jedyne miejsce w programie, którym cokolwiek trafia do pamięci
         // modułu — więc tu stoi bezpiecznik. Moduł bez potwierdzonej na
         // sprzęcie mapy adresów jest wyłącznie do odczytu: zapis pod źle
@@ -6101,6 +6265,7 @@ final class MIDIManager: ObservableObject {
         if bytes[5] == 0x41, bytes[6] == 0x63, bytes[7] == 0x03,
            bytes[8] == 0, bytes[9] == 0 {
             diagnosticIdentityReceived = true
+            usbTestIdentityID = bytes[2]
         }
         let manufacturer = bytes[5] == 0x41 ? "Roland" : hex([bytes[5]])
         // Bajty rodziny i modelu lecą do logu, bo nie mamy jeszcze
