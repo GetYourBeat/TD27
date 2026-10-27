@@ -4,7 +4,8 @@ Stand 26.10.2026. **Der Export eigener WAVs in TD0 ist jetzt implementiert und i
 der Oberfläche freigeschaltet.** Er verwendet eine originale TD0 als Vorlage.
 
 **Noch experimentell:** Die Binärtests bestehen. Ein Import am echten TD-27 und
-Kompilierung/Ausführung der Swift-App unter macOS sind hier noch nicht getestet.
+manuelle Bedienung der Swift-App sind noch nicht getestet. Der ARM64-Build und
+die automatisierten Swift-Tests wurden am 27.10.2026 erfolgreich auf GitHub ausgeführt.
 Es wird deshalb keine bestätigte Modulkompatibilität behauptet.
 
 ## Workflow in der Mac-App
@@ -67,8 +68,12 @@ Bei Erfolg entstehen `dist/PulsoKit-TD27.app` und `dist/PulsoKit-TD27-AppleSilic
 Bei Fehlern bricht es ab. Alternativ `PulsoKit.xcodeproj`, Schema PulsoKit, My Mac öffnen.
 Die App wird lokal ad-hoc signiert; sie ist nicht notarisiert.
 
-**Hier nicht ausgeführt:** Xcode-Build, Swift-Tests, Mac-GUI und Audiowiedergabe.
-Eine erfolgreiche Swift-Syntaxprüfung ersetzt diese Tests nicht.
+**Build bestätigt:** [GitHub Actions, 27.10.2026](https://github.com/GetYourBeat/TD27/actions/runs/40518473506), Xcode 26.6, ARM64 Release.
+11 Swift-Testfunktionen erfolgreich; darunter ein leerer Upstream-Beispieltest und ein
+optionaler Referenztest ohne bereitgestellte Originaldatei. Python: 24 Tests entdeckt,
+21 ausgeführt und 3 Referenztests mangels privater Dateien übersprungen.
+Die WAV-Konvertierung von 48 auf 44,1 kHz wurde im nativen Test geprüft.
+Manuelle GUI-/Hörtests und der Import am echten TD-27 bleiben offen.
 
 ## Export ohne Xcode, über Python
 
