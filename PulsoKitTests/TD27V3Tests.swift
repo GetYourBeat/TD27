@@ -64,6 +64,10 @@ struct TD27V3Tests {
         let model = TD27StudioModel(loadSavedBase:false);try model.loadKit(exported)
         #expect(model.project.samples.count == 1)
         #expect(model.project.samples[0].sourceSlot == 2)
+        model.selectedSample = model.project.samples[0].id
+        model.project.zones[0].semitones = 3
+        model.assign()
+        #expect(model.project.zones[0].semitones == 0)
         let again = try TD27Codec.export(model.project)
         #expect(try TD27Codec.blocks(TD27File(again)).count == 1)
         #expect(again == exported)

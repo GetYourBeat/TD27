@@ -93,6 +93,7 @@ final class TD27StudioModel: ObservableObject {
     func assign() {
         guard let id = selectedSample, project.samples.contains(where: { $0.id == id }) else { return }
         project.zones[selectedZone].sampleID = id
+        project.zones[selectedZone].semitones = 0
         project.zones[selectedZone].instrumentPitch = 0
         project.zones[selectedZone].instrumentDecay = 100
         project.zones[selectedZone].padDecay = 100
