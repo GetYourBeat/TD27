@@ -1693,7 +1693,7 @@ final class MIDIManager: ObservableObject {
     /// nikt nie potwierdził — a pod niepotwierdzony adres nie wolno pisać.
     ///
     /// **Wyłącznie odczyt.** Nie wysyła ani jednego DT1.
-    func probeKitArea() {
+    func probeKitArea(kitNumber requestedKit: Int? = nil) {
         guard !isOperationInProgress else {
             appendLog("Wait for the current MIDI operation to finish")
             return
@@ -1706,14 +1706,14 @@ final class MIDIManager: ObservableObject {
         // odczyt strukturalny jest wtedy wyłączony. Sonda jest jedynym
         // narzędziem, jakie zostaje, więc nie może od niego zależeć: bez
         // numeru bierzemy kit 1, czyli sam początek obszaru.
-        let kitNumber = currentKitNumber ?? 1
+        let kitNumber = min(profile.kitCount, max(1, requestedKit ?? currentKitNumber ?? 1))
         let base = kitAddress(kitIndex: kitNumber - 1)
         isDumpingSetup = true
         setupDumpActive = true
         status = "Probing the kit area…"
         appendLog(
             "KIT PROBE: \(profile.displayName), kit \(kitNumber)"
-                + (currentKitNumber == nil ? " (assumed)" : "")
+                + (requestedKit == nil && currentKitNumber == nil ? " (assumed)" : "")
                 + ", base \(hex(base)) — read only"
         )
 
@@ -1796,6 +1796,76 @@ final class MIDIManager: ObservableObject {
         isDumpingSetup = false
         status = "Stopped"
         appendLog("Dump stopped by the user")
+    }
+
+    // Diagnostic state is separate from the structured TD-17 reader.
+    @Published private(set) var connectionDiagnostic = "Noch kein Verbindungstest"
+    private var diagnosticAddress: [UInt8]?
+    private var diagnosticData: [UInt8]?
+    private var diagnosticIdentityReceived = false
+
+    /// Read-only: identity, a known responsive reference, then the requested kit.
+    /// Selecting a diagnostic kit NEVER sends Program Change or DT1.
+    func diagnoseConnection(kitNumber: Int) {
+        guard profile.kind == .td27, !isOperationInProgress else { return }
+        guard selectedOutputID != nil, connectedInput != nil else {
+            connectionDiagnostic = "Bitte MIDI-Eingang und -Ausgang auswählen."
+            return
+        }
+        let number = min(profile.kitCount, max(1, kitNumber))
+        let target = kitAddress(kitIndex: number - 1)
+        isDumpingSetup = true
+        setupDumpActive = true
+        diagnosticIdentityReceived = false
+        connectionDiagnostic = "Verbindung wird geprüft…"
+        appendLog("DIAGNOSTIC: TD-27 kit \(number), target \(hex(target)); read only, no kit switch")
+        probeTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.diagnosticAddress = nil
+                self.diagnosticData = nil
+                self.setupDumpActive = false
+                self.isDumpingSetup = false
+                self.probeTask = nil
+            }
+            self.sendSysEx([0xF0, 0x7E, 0x7F, 0x06, 0x01, 0xF7])
+            for _ in 0..<30 {
+                try? await Task.sleep(for: .milliseconds(50))
+                if Task.isCancelled { return }
+                if self.diagnosticIdentityReceived { break }
+            }
+            self.appendLog("DIAGNOSTIC: fresh TD-27 identity reply = \(self.diagnosticIdentityReceived)")
+            var results: [Bool] = []
+            for address in [[UInt8](arrayLiteral: 0x04, 0, 0, 0), target] {
+                if Task.isCancelled { return }
+                self.diagnosticAddress = address
+                self.diagnosticData = nil
+                self.sendRQ1(address: address, size: [0, 0, 0, 0x20])
+                for _ in 0..<30 {
+                    try? await Task.sleep(for: .milliseconds(50))
+                    if Task.isCancelled { return }
+                    if self.diagnosticData != nil { break }
+                }
+                results.append(self.diagnosticData != nil)
+                if let data = self.diagnosticData {
+                    let name = String(bytes: data.prefix(12), encoding: .ascii) ?? "?"
+                    self.appendLog("DIAGNOSTIC: \(self.hex(address)) replied; name bytes: \(name)")
+                } else {
+                    self.appendLog("DIAGNOSTIC: \(self.hex(address)) no matching response within 1500 ms")
+                }
+            }
+            if results[1] {
+                self.connectionDiagnostic = "Kit \(number) antwortet. Namen im Log mit dem Modul vergleichen."
+            } else if results[0] {
+                self.connectionDiagnostic = "Kit 1 antwortet, Kit \(number) nicht. Zielbereich nicht bestätigt."
+            } else if self.diagnosticIdentityReceived {
+                self.connectionDiagnostic = "TD-27 erkannt, aber keine Antwort aus beiden Kit-Bereichen."
+            } else {
+                self.connectionDiagnostic = "Keine Antwort: MIDI-Ports und Verbindung prüfen."
+            }
+            self.status = self.connectionDiagnostic
+            self.appendLog("DIAGNOSTIC: \(self.connectionDiagnostic)")
+        }
     }
 
     private var probeTask: Task<Void, Never>?
@@ -6028,6 +6098,10 @@ final class MIDIManager: ObservableObject {
             return
         }
 
+        if bytes[5] == 0x41, bytes[6] == 0x63, bytes[7] == 0x03,
+           bytes[8] == 0, bytes[9] == 0 {
+            diagnosticIdentityReceived = true
+        }
         let manufacturer = bytes[5] == 0x41 ? "Roland" : hex([bytes[5]])
         // Bajty rodziny i modelu lecą do logu, bo nie mamy jeszcze
         // potwierdzonych kodów TD-17 — pierwszy uruchomiony moduł nam je poda.
@@ -6154,6 +6228,9 @@ final class MIDIManager: ObservableObject {
         // Zrzut SETUP zjada wszystko, co przyjdzie — nie znamy jeszcze
         // znaczenia tych bloków, więc lecą do logu w surowej postaci.
         if setupDumpActive {
+            if let expected = diagnosticAddress, address == expected, !data.isEmpty {
+                diagnosticData = data
+            }
             setupDumpReplied = true
             appendLog("SETUP \(hex(address)): \(hex(data))")
             return

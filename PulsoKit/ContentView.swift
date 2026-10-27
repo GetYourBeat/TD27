@@ -16,6 +16,7 @@ struct ContentView: View {
     /// Tyka co minutę tylko po to, żeby przeliczyć termin ważności.
     /// Bez tego wygaśnięcie o północy zauważyłby dopiero pierwszy ruch
     /// w interfejsie.
+    @State private var diagnosticKitNumber = 1
     @State private var expiryTick = 0
     @State private var selectedSection: AppSection = .td27
 
@@ -1115,6 +1116,22 @@ struct ContentView: View {
 
     private var logTab: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if midi.profile.kind == .td27 {
+                HStack {
+                    Stepper("Diagnose-Kit: \(diagnosticKitNumber)", value: $diagnosticKitNumber, in: 1...100)
+                        .frame(width: 210)
+                    Button("Verbindung / Kit testen") {
+                        midi.diagnoseConnection(kitNumber: diagnosticKitNumber)
+                    }
+                    Button("Dieses Kit auslesen") {
+                        midi.probeKitArea(kitNumber: diagnosticKitNumber)
+                    }
+                }
+                .disabled(midi.isOperationInProgress)
+                Text(midi.connectionDiagnostic).textSelection(.enabled)
+                Text("Nur Lesen. Die Kitnummer wählt den angefragten Speicherbereich; sie schaltet das Modul nicht um. Vor Vergleichsmessungen den gelesenen Namen im Log prüfen.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             HStack {
                 Text("SysEx traffic").font(.headline)
                 Spacer()
