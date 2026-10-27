@@ -1926,14 +1926,14 @@ final class MIDIManager: ObservableObject {
                 self.isDumpingSetup = false
                 self.usbTestTask = nil
             }
-            func checkConnection() throws {
+            @MainActor func checkConnection() throws {
                 try Task.checkCancellation()
                 guard self.profile.kind == .td27, self.selectedInputID == input,
                       self.selectedOutputID == output, self.connectedInput != nil else {
                     throw USBTestError(message: "MIDI-Verbindung geändert. Bitte neu auslesen.")
                 }
             }
-            func read(_ address: [UInt8], count: Int) async throws -> [UInt8] {
+            @MainActor func read(_ address: [UInt8], count: Int) async throws -> [UInt8] {
                 try checkConnection()
                 self.diagnosticAddress = address
                 self.diagnosticData = nil
@@ -1949,7 +1949,7 @@ final class MIDIManager: ObservableObject {
                 }
                 throw USBTestError(message: "Keine passende Antwort; kein weiterer Schreibzugriff.")
             }
-            func snapshot() async throws -> TD27USBTest.Snapshot {
+            @MainActor func snapshot() async throws -> TD27USBTest.Snapshot {
                 let name = try await read([5, 0x16, 0, 0], count: 12)
                 let hi = try await read([5, 0x16, 0x41, 0], count: 9)
                 let ri = try await read([5, 0x16, 0x42, 0], count: 9)
