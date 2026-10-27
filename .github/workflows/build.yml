@@ -1,7 +1,7 @@
-name: Build Apple Silicon app
+name: Build TD27 Studio v3
 on:
   push:
-    branches: [main]
+    branches: [td27-studio-v3]
   workflow_dispatch:
 permissions:
   contents: read
@@ -32,8 +32,8 @@ jobs:
       - name: Downloadable app
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: PulsoKit-TD27-AppleSilicon
-          path: dist/PulsoKit-TD27-AppleSilicon.zip
+          name: PulsoKit-TD27-v3-AppleSilicon
+          path: dist/PulsoKit-TD27-v3-AppleSilicon.zip
           if-no-files-found: error
       - name: Build log
         if: always()

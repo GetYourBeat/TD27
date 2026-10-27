@@ -4,6 +4,8 @@ import CryptoKit
 /// File writer based on 29 observed sample blocks and three independent sample kits.
 /// Hardware import is not yet tested. Requires an original core as a template.
 enum TD27Codec {
+    static let vEditMainBase = 0xADC
+    static let vEditStride = 24
     static let mainBase = 0x594
     static let subBase = 0x834
     static let commonBase = 0x1D4
@@ -110,6 +112,7 @@ enum TD27Codec {
         _ = try project.validated()
         guard let source = project.sourceTD0 else { throw TD27File.Failure.invalid("Open an original TD-27 TD0 as a template first.") }
         let file = try TD27File(source)
+        guard file.canExportSamples else { throw TD27File.Failure.invalid("This 2.21 core can be inspected/copied, but its sample container is not verified. Choose a 1.01/1.02 base (for example your working exported kit) for WAV export.") }
         var core = Data(source.prefix(4256)), existing = try blocks(file)
         var metadata: Data? = source.count > 4256 ? Data(source[4256..<20304]) : nil
         var used = Set(existing.keys), slots: [UUID:Int] = [:]
@@ -132,8 +135,20 @@ enum TD27Codec {
         }
         let kitName = name(project.title,count:12)
         core.replaceSubrange(8..<20,with:kitName);core.replaceSubrange(48..<60,with:kitName)
+        if let crossStick = project.crossStick {
+            core[81] = UInt8(crossStick.instrument)
+            put(Int((crossStick.volumeDB*10).rounded()),in:&core,at:82,bytes:2)
+        }
         for (zoneIndex,zone) in project.zones.enumerated() {
+            if zone.sampleID == nil && project.muteUnassigned == true {
+                put(-600,in:&core,at:mainBase+zoneIndex*28+2,bytes:2)
+                core[commonBase+zoneIndex*40+5] = 0
+            }
             guard let id = zone.sampleID, let sample = project.samples.first(where: { $0.id == id }) else { continue }
+            if slots[id] == nil, let oldSlot = sample.sourceSlot, let original = existing[oldSlot] {
+                let decoded = try decode(original), wave = try TD27Wave(sample.wav)
+                if decoded.channels == wave.channels && decoded.pcm == pcm16(wave) { slots[id] = oldSlot }
+            }
             if slots[id] == nil {
                 guard let slot = (2..<500).first(where: { !used.contains($0) }) else { throw TD27File.Failure.invalid("No unused sample slots.") }
                 let wave = try TD27Wave(sample.wav)
@@ -153,8 +168,13 @@ enum TD27Codec {
             let offset = mainBase+zoneIndex*28, common = commonBase+zoneIndex*40
             put(slots[id]!,in:&core,at:offset,bytes:2)
             put(Int((zone.volumeDB*10).rounded()),in:&core,at:offset+2,bytes:2)
-            core[offset+4] = 1;core[offset+5] = 0;core[offset+10] = 0;core[offset+11] = 100
+            core[offset+4] = 1;core[offset+5] = 0;core[offset+10] = 0;core[offset+11] = UInt8((zone.padDecay ?? 100).rounded())
             put(Int((zone.semitones*100).rounded()),in:&core,at:offset+12,bytes:2);core[offset+14] = 0
+            // User samples also use the independent V-Edit pitch/decay block.
+            // Reset both on assignment: old drum shell/head values must not become sample pitch/decay.
+            let vedit = vEditMainBase+zoneIndex*vEditStride
+            core[vedit] = UInt8(truncatingIfNeeded:Int((zone.instrumentPitch ?? 0).rounded()))
+            core[vedit+1] = UInt8((zone.instrumentDecay ?? 100).rounded())
             core[common] = UInt8(truncatingIfNeeded:Int((zone.pan*30).rounded()))
             core[common+5] = 0 // Replaced main sample plays without the original sub-layer.
         }

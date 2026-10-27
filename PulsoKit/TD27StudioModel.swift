@@ -8,17 +8,26 @@ final class TD27StudioModel: ObservableObject {
     @Published var project = TD27Project()
     @Published var selectedZone = 0
     @Published var selectedSample: UUID?
-    @Published var message = "TD0 export available as an experimental build; not yet tested on hardware."
+    @Published var message = "TD-27 Studio v3 — neutral sample pitch/decay. Updated export needs a hardware test."
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private let pitch = AVAudioUnitTimePitch()
     private var previewURL: URL?
     var parsedSource: TD27File? { project.sourceTD0.flatMap { try? TD27File($0) } }
 
-    init() {
+    private var baseURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("TD27StudioV3", isDirectory: true).appendingPathComponent("base.TD0")
+    }
+    init(loadSavedBase: Bool = true) {
         engine.attach(player); engine.attach(pitch)
         engine.connect(player, to: pitch, format: nil)
         engine.connect(pitch, to: engine.mainMixerNode, format: nil)
+        if loadSavedBase, let data = try? Data(contentsOf: baseURL), let file = try? TD27File(data), file.canExportSamples {
+            project.sourceTD0 = data
+            project.muteUnassigned = true
+            message = "New kit using your saved base. Unassigned main instruments start at -60 dB; effects remain from the base."
+        }
     }
     func run(_ action: () throws -> Void) {
         do { try action() } catch { message = error.localizedDescription }
@@ -84,6 +93,9 @@ final class TD27StudioModel: ObservableObject {
     func assign() {
         guard let id = selectedSample, project.samples.contains(where: { $0.id == id }) else { return }
         project.zones[selectedZone].sampleID = id
+        project.zones[selectedZone].instrumentPitch = 0
+        project.zones[selectedZone].instrumentDecay = 100
+        project.zones[selectedZone].padDecay = 100
         message = "Assigned to the main instrument. TD0 export replaces this zone and disables its previous sub-layer."
     }
     func removeSample() {
@@ -142,6 +154,75 @@ final class TD27StudioModel: ObservableObject {
             stop(); project = next; selectedZone = 0; selectedSample = nil; message = "Project loaded."
         }
     }
+    func saveAsDefaultBase() {
+        run {
+            guard let file = parsedSource, file.canExportSamples else {
+                throw TD27File.Failure.invalid("Select a working 1.01/1.02 TD0 as the reusable base first.")
+            }
+            try FileManager.default.createDirectory(at: baseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try file.bytes.write(to: baseURL, options: .atomic)
+            message = "Base saved locally. New kit now reuses it without a file picker. Original file unchanged."
+        }
+    }
+    func newKit() {
+        guard confirmReplacement() else { return }
+        run {
+            guard FileManager.default.fileExists(atPath:baseURL.path) else {
+                throw TD27File.Failure.invalid("Choose a 1.01/1.02 base once, then click Remember as base for new kits.")
+            }
+            let data = try Data(contentsOf: baseURL)
+            let file = try TD27File(data)
+            guard file.canExportSamples else { throw TD27File.Failure.invalid("Save a supported base first.") }
+            stop(); project = TD27Project(); project.sourceTD0 = data; project.muteUnassigned = true
+            selectedSample = nil; selectedZone = 0
+            message = "New kit. Assigned samples start at neutral pitch and full decay. Base effects are retained."
+        }
+    }
+    var crossStickSettings: TD27Project.CrossStick {
+        if let settings = project.crossStick { return settings }
+        guard let file = parsedSource else { return .init() }
+        let start = file.bodyOffset
+        return .init(instrument: min(15,Int(file.bytes[start+33])),
+                     volumeDB: max(-60,min(6,Double(Int16(bitPattern:UInt16(TD27Codec.u16(file.bytes,start+34))))/10)))
+    }
+    func resetSelectedSample() {
+        project.zones[selectedZone].semitones = 0
+        project.zones[selectedZone].instrumentPitch = 0
+        project.zones[selectedZone].instrumentDecay = 100
+        project.zones[selectedZone].padDecay = 100
+        message = "Pitch reset to zero on both levels; both decay controls set to 100. Effects remain from the base."
+    }
+    func openKit() {
+        let panel = NSOpenPanel(); panel.allowedContentTypes = [UTType(filenameExtension: "TD0") ?? .data]
+        guard panel.runModal() == .OK, let url = panel.url, confirmReplacement() else { return }
+        run { try loadKit(readBounded(url, limit: 256*1024*1024)) }
+    }
+    func loadKit(_ data: Data) throws {
+        let file = try TD27File(data)
+        var next = TD27Project(); next.sourceTD0 = data; next.title = file.kitName
+        let blocks = try TD27Codec.blocks(file)
+        var ids: [Int:UUID] = [:]
+        if file.canExportSamples {
+            for z in next.zones.indices {
+                let offset = TD27Codec.mainBase+z*28, slot = TD27Codec.u16(data,offset)
+                guard data[offset+4] == 1, let block = blocks[slot] else { continue }
+                if ids[slot] == nil {
+                    let sample = TD27Project.Sample(name:file.sampleNames[slot],wav:TD27Codec.wav(try TD27Codec.decode(block)),sourceSlot:slot)
+                    next.samples.append(sample); ids[slot] = sample.id
+                }
+                next.zones[z].sampleID = ids[slot]
+                next.zones[z].volumeDB = max(-60,min(6,Double(Int16(bitPattern:UInt16(TD27Codec.u16(data,offset+2))))/10))
+                next.zones[z].semitones = max(-24,min(24,Double(Int16(bitPattern:UInt16(TD27Codec.u16(data,offset+12))))/100))
+                next.zones[z].pan = max(-1,min(1,Double(Int8(bitPattern:data[TD27Codec.commonBase+z*40]))/30))
+                next.zones[z].padDecay = Double(max(1,min(100,Int(data[offset+11]))))
+                let vedit = TD27Codec.vEditMainBase+z*TD27Codec.vEditStride
+                next.zones[z].instrumentPitch = Double(max(-100,min(100,Int(Int8(bitPattern:data[vedit])))))
+                next.zones[z].instrumentDecay = Double(max(1,min(100,Int(data[vedit+1]))))
+            }
+        }
+        stop(); project = try next.validated(); selectedZone = 0; selectedSample = nil
+        message = file.canExportSamples ? "Kit opened with referenced user samples and stored parameters. Use Reset sample sound to remove inherited pitch/decay." : "2.21 kit inspected and checksum verified. Exact-copy saving is supported; sample export requires a 1.01/1.02 base."
+    }
     func openTD0() {
         let panel = NSOpenPanel(); panel.allowsMultipleSelection = false
         panel.allowedContentTypes = [UTType(filenameExtension: "TD0") ?? .data]
@@ -158,7 +239,7 @@ final class TD27StudioModel: ObservableObject {
     func exportTD0() {
         run {
             let output = try TD27Codec.export(project)
-            let panel = NSSavePanel(); panel.title = "Experimental TD-27 export — hardware test pending"
+            let panel = NSSavePanel(); panel.title = "TD-27 Studio v3 export — updated parameter handling"
             panel.nameFieldStringValue = "KIT-001.TD0"
             panel.allowedContentTypes = [UTType(filenameExtension: "TD0") ?? .data]
             guard panel.runModal() == .OK, let url = panel.url else { return }
@@ -167,7 +248,7 @@ final class TD27StudioModel: ObservableObject {
             let saved = try Data(contentsOf: url)
             guard saved == output else { throw TD27File.Failure.invalid("Saved bytes differ from export.") }
             _ = try TD27Codec.blocks(TD27File(saved))
-            message = "TD0 saved with assigned WAVs and verified by re-reading. Hardware compatibility still needs testing. Original file was not overwritten."
+            message = "TD0 saved with assigned WAVs and verified by re-reading. The updated parameter handling still needs a hardware test. Original file was not overwritten."
         }
     }
     func extractSourceSamples() {

@@ -36,7 +36,9 @@ class CodecTests(unittest.TestCase):
             self.assertEqual(info['main'][0],dict(instrument=slot,bank=1,level_db=-3.5,pitch_cents=200))
             self.assertEqual(data[COMMON],241);self.assertEqual(data[COMMON+5],0)
             self.assertEqual(data[MAIN+28:MAIN+23*28],template[MAIN+28:MAIN+23*28])
-            self.assertEqual(data[SUB:4240],template[SUB:4240])
+            self.assertEqual(data[SUB:0xADC],template[SUB:0xADC])
+            for zone in (0,23):self.assertEqual(data[0xADC+zone*24:0xADE+zone*24],bytes([0,100]))
+            self.assertEqual(data[0xADE:0xADC+23*24],template[0xADE:0xADC+23*24])
             self.assertEqual(inspect(data)['name'],'MY KIT')
             self.assertEqual(hashlib.md5(data[:4240]).digest(),data[4240:4256])
     def test_24bit_reduction(self):

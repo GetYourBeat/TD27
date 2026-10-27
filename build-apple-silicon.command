@@ -14,7 +14,7 @@ xcodebuild -project PulsoKit.xcodeproj -scheme PulsoKit -configuration Release \
   -destination 'generic/platform=macOS' -derivedDataPath build/DerivedData \
   ARCHS=arm64 ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO build
 mkdir -p dist
-/usr/bin/ditto build/DerivedData/Build/Products/Release/PulsoKit.app dist/PulsoKit-TD27.app
-/usr/bin/codesign --force --deep --sign - dist/PulsoKit-TD27.app
-/usr/bin/ditto -c -k --sequesterRsrc --keepParent dist/PulsoKit-TD27.app dist/PulsoKit-TD27-AppleSilicon.zip
-echo "Built: $PWD/dist/PulsoKit-TD27.app"
+/usr/bin/ditto build/DerivedData/Build/Products/Release/PulsoKit.app dist/PulsoKit-TD27-v3.app
+/usr/bin/codesign --force --deep --sign - dist/PulsoKit-TD27-v3.app
+/usr/bin/ditto -c -k --sequesterRsrc --keepParent dist/PulsoKit-TD27-v3.app dist/PulsoKit-TD27-v3-AppleSilicon.zip
+echo "Built: $PWD/dist/PulsoKit-TD27-v3.app"

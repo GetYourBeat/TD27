@@ -10,6 +10,10 @@ def inspect(data):
     def name(o,n): return data[o:o+n].split(b'\0')[0].decode('ascii', errors='replace').rstrip()
     require(4256 <= len(data) <= 256*1024*1024, 'size')
     require(data[:8] == b'TD-27\0KT', 'signature')
+    if data[20:24] == b'2.21':
+        require(len(data)==4288, '2.21 supports core-only inspection')
+        require(hashlib.md5(data[:4272]).digest()==data[4272:4288], 'core MD5')
+        return dict(bytes=len(data),name=name(80,12),header_name=name(8,12),version='2.21',core_md5=True,blocks=[])
     require(data[20:24] in (b'1.01',b'1.02'), 'version')
     require(hashlib.md5(data[:4240]).digest() == data[4240:4256], 'core MD5')
     result = dict(bytes=len(data), sha256=hashlib.sha256(data).hexdigest(), name=name(48,12),

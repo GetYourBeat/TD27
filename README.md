@@ -1,4 +1,4 @@
-> TD-27 extension: see [README-TD27-DE.md](README-TD27-DE.md). Experimental TD0 export with embedded samples is now implemented; Apple Silicon build and automated Swift tests passed on [GitHub Actions](https://github.com/GetYourBeat/TD27/actions/runs/40518473506). Hardware import and manual GUI/audio checks remain unverified.
+> Separate TD-27 Studio v3 test version: [German instructions](README-TD27-DE.md). The original version on main is preserved.
 
 # PulsoKit
 

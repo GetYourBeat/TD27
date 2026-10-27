@@ -51,9 +51,12 @@ struct TD27CodecTests {
         #expect(TD27Codec.u16(result,0x594) == 2)
         #expect(result[0x598] == 1)
         #expect(result[0x1D4] == 241)
-        #expect(result[0x594+28..<4240] == core()[0x594+28..<4240])
+        #expect(result[0x594+28..<0xADC] == core()[0x594+28..<0xADC])
+        #expect(result[0xADC] == 0)
+        #expect(result[0xADD] == 100)
+        #expect(result[0xADE..<4240] == core()[0xADE..<4240])
         let digest = SHA256.hash(data:result).map { String(format:"%02x",$0) }.joined()
-        #expect(digest == "31e0a14b3c6d4a63cc51a876ebce6daad74c504112853ae9aefa8daab64d3bd1")
+        #expect(digest == "3393d89089c673f5008493456730303018cdad6dee3472c20716ecd25c676db4")
     }
     @Test func originalSampleFixtureRoundTripWhenProvided() throws {
         guard let folder = ProcessInfo.processInfo.environment["TD27_FIXTURES"] else { return }

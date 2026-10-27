@@ -5,6 +5,10 @@ import CryptoKit
 struct TD27File {
     static let coreSize = 4256
     static let metadataEnd = 20320
+    let version: String
+    let coreLength: Int
+    let bodyOffset: Int
+    var canExportSamples: Bool { version != "2.21" }
     let bytes: Data
     let kitName: String
     let sampleNames: [String]
@@ -37,16 +41,23 @@ struct TD27File {
         guard data.prefix(8) == Data("TD-27\0KT".utf8) else {
             throw Failure.invalid("Expected TD-27 TD0; TDZ presets are a different format.")
         }
-        guard ["1.01", "1.02"].contains(Self.ascii(data, 20, 4)) else {
-            throw Failure.invalid("Only the observed TD-27 file versions 1.01/1.02 are supported.")
+        version = Self.ascii(data, 20, 4)
+        coreLength = version == "2.21" ? 4288 : 4256
+        bodyOffset = version == "2.21" ? 80 : 48
+        guard ["1.01", "1.02", "2.21"].contains(version), data.count >= coreLength else {
+            throw Failure.invalid("Supported TD-27 versions: 1.01/1.02 and core-only 2.21.")
         }
         func checkMD5(_ start: Int, _ end: Int) throws {
             guard Data(Insecure.MD5.hash(data: data[start..<end])) == data[end..<end+16] else {
                 throw Failure.invalid("MD5 mismatch at byte \(end).")
             }
         }
-        try checkMD5(0, 4240)
-        kitName = Self.ascii(data, 48, 12)
+        try checkMD5(0, coreLength-16)
+        kitName = Self.ascii(data, bodyOffset, 12)
+        if version == "2.21" {
+            guard data.count == coreLength else { throw Failure.invalid("2.21 embedded sample layout is not yet verified.") }
+            bytes = data; sampleNames = []; blocks = []; return
+        }
         var names: [String] = []
         var records: [SampleBlock] = []
         if data.count > Self.coreSize {

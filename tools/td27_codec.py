@@ -74,7 +74,9 @@ def assignments(source):
              for i in range(24)] for label,base in [('main',MAIN),('sub',SUB)]}
 
 def export(template,edits,title=None):
-    inspect(template);blocks=source_blocks(template);core=bytearray(template[:4256]);meta=None
+    info=inspect(template)
+    if info["version"] == "2.21": raise ValueError("2.21 sample container not verified; use a 1.01/1.02 base")
+    blocks=source_blocks(template);core=bytearray(template[:4256]);meta=None
     if len(template)>4256:meta=bytearray(template[4256:20304])
     if title is not None:
         name=fixed_name(title,12);core[8:20]=name;core[48:60]=name
@@ -104,6 +106,9 @@ def export(template,edits,title=None):
         slot=slots[key];o=MAIN+zone*28
         struct.pack_into('<Hh',core,o,slot,round(level*10));core[o+4]=1
         core[o+5]=0;core[o+10]=0;core[o+11]=100;struct.pack_into('<h',core,o+12,round(tuning*100));core[o+14]=0
+        ip=float(e.get('instrument_pitch',0));decay=float(e.get('instrument_decay',100));pd=float(e.get('pad_decay',100))
+        if not -100<=ip<=100 or not 1<=decay<=100 or not 1<=pd<=100:raise ValueError('Invalid instrument parameter')
+        core[0xADC+zone*24]=round(ip)&255;core[0xADD+zone*24]=round(decay);core[o+11]=round(pd)
         core[COMMON+zone*40]=round(pan*30)&255;core[COMMON+zone*40+5]=0 # disable old sub-layer on replaced zone
         audit.append({'zone':zone,'sample_slot':slot,'wav':Path(key).name})
     if blocks:
