@@ -1,0 +1,43 @@
+name: Build Apple Silicon app
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: apple-silicon-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Select newest stable Xcode
+        run: |
+          set -euo pipefail
+          NEWEST=$(ls -d /Applications/Xcode*.app | grep -vi beta | sort -V | tail -1)
+          sudo xcode-select -s "$NEWEST"
+          xcodebuild -version
+          swift --version
+      - name: Python format tests
+        run: python3 -m unittest discover -s tools -p 'test_*.py' -v
+      - name: Swift tests and Apple Silicon build
+        run: |
+          set -o pipefail
+          bash build-apple-silicon.command 2>&1 | tee build.log
+      - name: Downloadable app
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: PulsoKit-TD27-AppleSilicon
+          path: dist/PulsoKit-TD27-AppleSilicon.zip
+          if-no-files-found: error
+      - name: Build log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: build-log
+          path: build.log
