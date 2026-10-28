@@ -134,6 +134,10 @@ enum TD27Codec {
                 if !label.isEmpty && label != "----------------" { used.insert(i) }
             }
         }
+        if project.title == file.kitName, project.crossStick == nil, project.muteUnassigned != true,
+           project.zones.allSatisfy({ $0.mainEdited == false && $0.panEdited != true && $0.layer == nil && $0.sub?.edited != true }) {
+            return source // Preserve header padding, opaque framing and original block order too.
+        }
         let kitName = name(project.title,count:12)
         core.replaceSubrange(8..<20,with:kitName);core.replaceSubrange(48..<60,with:kitName)
         if let crossStick = project.crossStick {
@@ -189,7 +193,7 @@ enum TD27Codec {
                     decay:zone.instrumentDecay ?? 100, padDecay:zone.padDecay ?? 100)
                 core[common] = UInt8(truncatingIfNeeded:Int((zone.pan*30).rounded()))
                 // Legacy projects disabled the sub layer. New projects explicitly preserve/control it.
-                if zone.layer == nil { core[common+5] = 0 }
+                if zone.layer == nil && zone.mainEdited == nil { core[common+5] = 0 }
             }
             if let sub = zone.sub, sub.edited, let id = sub.sampleID {
                 try assignSample(id, zoneIndex:zoneIndex, sub:true, volume:sub.volumeDB,

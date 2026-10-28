@@ -1,7 +1,7 @@
 import Foundation
 
 struct TD27Project: Codable {
-    var schema = 1
+    var schema = 2
     var title = "New TD-27 kit"
     var sourceTD0: Data?
     var sourceKitNumber: Int?
@@ -53,7 +53,7 @@ struct TD27Project: Codable {
         var fadePoint: Int
     }
     func validated() throws -> Self {
-        guard schema == 1, title.count <= 128, samples.count <= 500,
+        guard (1...2).contains(schema), title.count <= 128, samples.count <= 500,
               zones.map(\.name) == TD27ZoneCatalog.names,
               Set(samples.map(\.id)).count == samples.count else {
             throw TD27File.Failure.invalid("Invalid project schema, samples or zones.")

@@ -105,4 +105,38 @@ struct TD27BrowserTests {
         p.targetKitNumber = 78; p.zones[2].layer?.fadePoint = 160
         #expect(throws:(any Error).self) { try p.validated() }
     }
+    @Test func editingExistingMainKeepsSubEnabledWithoutExplicitLayerEdit() throws {
+        var p = TD27Project(); p.sourceTD0 = source(); p.title = "Test"
+        let a = try sample("a"); p.samples = [a]
+        p.zones[1].sampleID = a.id
+        p.zones[1].sub = .init(sampleID:a.id,edited:true)
+        p.zones[1].layer = .init(enabled:true,mode:4,fadePoint:87)
+        let original = try TD27Codec.export(p)
+        let model = TD27StudioModel(loadSavedBase:false); try model.loadKit(original)
+        model.project.zones[1].instrumentPitch = -25
+        model.project.zones[1].mainEdited = true
+        let edited = try TD27Codec.export(model.project)
+        let common = TD27Codec.commonBase+40
+        #expect(edited[common..<common+40] == original[common..<common+40])
+        let sub = TD27Codec.subBase+28
+        #expect(edited[sub..<sub+28] == original[sub..<sub+28])
+    }
+    @Test func newKitAssignmentDoesNotReactivateInheritedSub() throws {
+        var bytes = source(); bytes[TD27Codec.commonBase+5] = 1
+        bytes[4240..<4256] = Data(Insecure.MD5.hash(data:bytes.prefix(4240)))
+        let model = TD27StudioModel(loadSavedBase:false)
+        model.project.sourceTD0 = bytes; model.project.muteUnassigned = true
+        let a = try sample("a"); model.project.samples = [a]; model.selectedSample = a.id
+        model.assign()
+        #expect(model.project.zones[0].layer?.enabled == false)
+        #expect(try TD27Codec.export(model.project)[TD27Codec.commonBase+5] == 0)
+    }
+    @Test func newProjectVersionProtectsAgainstOldEditorDataLoss() throws {
+        #expect(TD27Project().schema == 2)
+        var old = TD27Project(); old.schema = 1
+        #expect(try old.validated().schema == 1)
+        old.schema = 99
+        #expect(throws:(any Error).self) { try old.validated() }
+    }
+
 }

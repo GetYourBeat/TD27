@@ -2,6 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct TD27StudioView: View {
+    @EnvironmentObject private var midi: MIDIManager
     @ObservedObject var model: TD27StudioModel
     @State private var browser = false
     @State private var overview = false
@@ -37,6 +38,7 @@ struct TD27StudioView: View {
             else {
             HSplitView {
                 library.frame(minWidth: 220, idealWidth: 260, maxWidth: 340)
+                ScrollView {
                 VStack(alignment: .leading) {
                     TextField("Project title", text: $model.project.title).font(.title2)
                     Toggle("Alle Main-/Sub-Zuordnungen anzeigen",isOn:$overview)
@@ -94,7 +96,8 @@ struct TD27StudioView: View {
                         }.padding(6)
                     }.disabled(model.selectedLayer == 0 ? model.project.zones[model.selectedZone].sampleID == nil : model.project.zones[model.selectedZone].sub?.sampleID == nil)
                     }
-                }.padding(.horizontal, 16).frame(minWidth: 530)
+                }.padding(.horizontal, 16)
+                }.frame(minWidth:530)
                 sourceInspector.frame(minWidth: 200, idealWidth: 230, maxWidth: 320)
             }
             }
@@ -195,7 +198,9 @@ struct TD27StudioView: View {
             }
             Divider()
             Picker("Zielplatz am Modul",selection:Binding(get:{ model.project.targetKitNumber ?? 78 },set:{ model.project.targetKitNumber = $0 })) {
-                ForEach(1...100,id:\.self) { Text("Kit \($0)").tag($0) }
+                ForEach(1...100,id:\.self) { n in
+                    Text("Kit \(n) · \(midi.td27KitNames.first(where: { $0.number == n })?.name ?? "Inhalt nicht gelesen")").tag(n)
+                }
             }
             Stepper("SD-Datei: \(model.project.sdFileNumber ?? 1)",value:Binding(get:{model.project.sdFileNumber ?? 1},set:{model.project.sdFileNumber = $0}),in:1...999)
             Button("SD-Paket + Importanleitung…") {

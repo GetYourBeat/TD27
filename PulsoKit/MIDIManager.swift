@@ -1270,7 +1270,7 @@ final class MIDIManager: ObservableObject {
                 "Module changed: \(profile.displayName) → \(detected.displayName)"
                     + (detected.hasVerifiedMap
                         ? ""
-                        : " — read only, address map not verified yet")
+                        : " — general writes locked; use TD-27 Studio kit browser")
             )
             profile = detected
             initialReadDone = false
@@ -2268,8 +2268,7 @@ final class MIDIManager: ObservableObject {
             // urządzeń nie zaczynało tego od nowa.
             kitListScanDone = true
             appendLog(
-                "\(profile.displayName): kit names cannot be read until the "
-                    + "address map is confirmed."
+                "\(profile.displayName): use TD-27 Studio → USB / SD Kit-Browser to read kit names."
             )
             return
         }
@@ -2506,10 +2505,9 @@ final class MIDIManager: ObservableObject {
         guard profile.hasVerifiedMap else {
             nextReadShouldBeQuick = false
             appendLog(
-                "\(profile.displayName): the kit layout is not mapped yet. "
-                    + "Use “Probe kit area” in the Log tab and send the log over."
+                "\(profile.displayName): use TD-27 Studio → USB / SD Kit-Browser. General legacy editor remains disabled."
             )
-            status = "\(profile.displayName): kit layout not mapped yet"
+            status = "\(profile.displayName): use TD-27 Studio kit browser"
             return
         }
 

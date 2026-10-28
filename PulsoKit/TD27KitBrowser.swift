@@ -48,7 +48,7 @@ enum TD27KitBrowser {
         return .init(number:id, bank:Int(raw[8]), raw:raw)
     }
     static func name(_ raw: [UInt8]) throws -> String {
-        guard raw.count == 12, raw.allSatisfy({ $0 == 0 || (32...126).contains($0) }) else {
+        guard raw.count == 12, raw.allSatisfy({ $0 <= 126 }) else {
             throw TD27File.Failure.invalid("Ungültiger Kitname in MIDI-Antwort.")
         }
         return String(bytes:raw.prefix(while: { $0 != 0 }), encoding:.ascii)!.trimmingCharacters(in:.whitespaces)

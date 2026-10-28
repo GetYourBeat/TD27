@@ -110,7 +110,10 @@ final class TD27StudioModel: ObservableObject {
             project.zones[selectedZone].layer = layer
         } else {
             // Replacing Main preserves the existing Sub and its layer behavior.
-            if project.zones[selectedZone].layer == nil { project.zones[selectedZone].layer = currentLayerSettings }
+            if project.zones[selectedZone].layer == nil {
+                project.zones[selectedZone].layer = project.muteUnassigned == true
+                    ? .init(enabled:false,mode:0,fadePoint:50) : currentLayerSettings
+            }
             project.zones[selectedZone].sampleID = id
             project.zones[selectedZone].mainEdited = true
             resetSelectedSample()
@@ -182,6 +185,7 @@ final class TD27StudioModel: ObservableObject {
     }
     func saveProject() {
         run {
+            project.schema = 2 // Old builds must reject, not silently discard Main/Sub edits.
             _ = try project.validated()
             let panel = NSSavePanel(); panel.nameFieldStringValue = "Kit.td27project"
             panel.allowedContentTypes = [UTType(filenameExtension: "td27project") ?? .data]

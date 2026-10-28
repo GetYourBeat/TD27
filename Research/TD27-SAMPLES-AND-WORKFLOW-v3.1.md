@@ -50,6 +50,18 @@ The app exports an explicit destination instruction, not a fictional embedded
 bank-selection command. The destination kit must be backed up before import.
 https://static.roland.com/assets/media/pdf/TD-27_Reference_eng02_W.pdf
 
+## Official MIDI implementation found and checked
+
+Roland Corporation, TD-27 MIDI Implementation, version 2.00, dated 2022-08-11,
+eng04: pp. 11–12 confirm kit bases, 100 slots, Main/Sub zone ordering and V-Edit
+addresses; pp. 19–21 document instrument IDs, banks and common fields. This
+independently confirms the read addresses previously obtained from V-Drum Explorer.
+The browser reads the common prefix of the documented structures. Modern extension
+bytes are not edited or reconstructed into TD0. The documented top-level address map
+does not expose a user-sample waveform memory block; no supported WAV bulk transfer
+is established by this document. Parameter access is not a complete audio backup.
+https://static.roland.com/assets/media/pdf/TD-27_MIDI_Imple_eng04_W.pdf
+
 ## Implementation and evidence boundaries
 
 - USB kit names: 100 separate requests; selected kit: all 24 zone Main/Sub

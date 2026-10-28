@@ -39,6 +39,9 @@ Zielplatz nicht als frei garantieren. Es erfolgt kein automatischer Hardwarewrit
 - SD-Paket mit separater Zielvorgabe und Importanleitung; kein Überschreiben.
 - Bestätigter Snare-USB-Test für Kit 76 auch direkt aus dem Browser erreichbar.
 
+Neue Projektdateien verwenden Schema 2, damit ältere Apps die Sub-Layer nicht
+stillschweigend verlieren. Bestehende Schema-1-Projekte können geöffnet werden.
+
 ## Grenzen
 
 - 1.01/1.02 TD0: bearbeiten/exportieren. 2.21: prüfen/anzeigen/Originalkopie.
