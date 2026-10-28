@@ -1,4 +1,4 @@
-name: Build TD27 Studio v3
+name: Build TD27 Studio v3.1
 on:
   push:
     branches: [td27-studio-v3]
@@ -32,8 +32,11 @@ jobs:
       - name: Downloadable app
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: PulsoKit-TD27-v3-AppleSilicon
-          path: dist/PulsoKit-TD27-v3-AppleSilicon.zip
+          name: PulsoKit-TD27-v3.1-AppleSilicon
+          path: |
+            dist/PulsoKit-TD27-v3.1-AppleSilicon.zip
+            dist/UPDATE-v3.1-DE.md
+            dist/TD27-SAMPLES-AND-WORKFLOW-v3.1.md
           if-no-files-found: error
       - name: Build log
         if: always()

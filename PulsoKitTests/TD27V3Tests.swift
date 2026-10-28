@@ -12,6 +12,9 @@ struct TD27V3Tests {
         d.replaceSubrange(20..<24,with:Data(version.utf8))
         let start = modern ? 80 : 48
         d.replaceSubrange(start..<start+12,with:Data("Test        ".utf8))
+        for z in 0..<24 {
+            d[TD27Codec.commonBase+(modern ? 32 : 0)+z*40+8] = 50
+        }
         d.replaceSubrange(d.count-16..<d.count,with:Data(Insecure.MD5.hash(data:d.dropLast(16))))
         return d
     }

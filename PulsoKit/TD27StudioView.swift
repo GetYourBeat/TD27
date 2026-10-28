@@ -3,6 +3,8 @@ import UniformTypeIdentifiers
 
 struct TD27StudioView: View {
     @ObservedObject var model: TD27StudioModel
+    @State private var browser = false
+    @State private var overview = false
     @State private var targeted = false
     @State private var showCrossStick = false
     private let pads: [(String, [Int], Double, Double)] = [
@@ -16,7 +18,7 @@ struct TD27StudioView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("TD-27 Studio v3").font(.largeTitle.bold())
+                Text("TD-27 Studio v3.1").font(.largeTitle.bold())
                 Spacer()
                 Button("New kit", action: model.newKit)
                 Button("Open kit…", action: model.openKit)
@@ -24,13 +26,35 @@ struct TD27StudioView: View {
                 Button("Open project", action: model.openProject)
                 Button("Save project", action: model.saveProject)
             }
-            Text("Separate v3 test build • Export import confirmed for v2; new sound settings need testing")
-                .foregroundStyle(.orange)
+            HStack {
+                Picker("Ansicht",selection:$browser) {
+                    Text("Kit-Editor").tag(false)
+                    Text("USB / SD Kit-Browser").tag(true)
+                }.pickerStyle(.segmented).frame(width:400)
+                Text("Änderungen lokal · vollständiger Transfer über SD").font(.caption).foregroundStyle(.secondary)
+            }
+            if browser { TD27BrowserView(model:model) }
+            else {
             HSplitView {
                 library.frame(minWidth: 220, idealWidth: 260, maxWidth: 340)
                 VStack(alignment: .leading) {
                     TextField("Project title", text: $model.project.title).font(.title2)
-                    stage.frame(minHeight: 260, idealHeight: 300)
+                    Toggle("Alle Main-/Sub-Zuordnungen anzeigen",isOn:$overview)
+                    if overview {
+                        ScrollView {
+                            VStack(alignment:.leading,spacing:8) {
+                                ForEach(0..<24,id:\.self) { i in
+                                    Button { model.selectedZone = i; showCrossStick = false } label: {
+                                        VStack(alignment:.leading) {
+                                            Text(TD27ZoneCatalog.names[i]).bold()
+                                            Text("Main: " + model.assignment(zone:i,sub:false))
+                                            Text("Sub: " + model.assignment(zone:i,sub:true))
+                                        }.frame(maxWidth:.infinity,alignment:.leading)
+                                    }.buttonStyle(.plain)
+                                }
+                            }.font(.caption)
+                        }.frame(height:240)
+                    } else { stage.frame(minHeight:220,idealHeight:260) }
                     HStack {
                         Text("PD-140DS:")
                         Button("Head") { model.selectedZone = 1; showCrossStick = false }
@@ -45,29 +69,34 @@ struct TD27StudioView: View {
                             Text(zone.name).tag(index)
                         }
                     }
+                    Picker("Ebene",selection:$model.selectedLayer) {
+                        Text("Main").tag(0); Text("Sub").tag(1)
+                    }.pickerStyle(.segmented)
                     HStack {
                         Button("Assign selected sample", action: model.assign).disabled(model.selectedSample == nil)
-                        Button("Use original instrument") { model.project.zones[model.selectedZone].sampleID = nil }
+                        Button("Original wiederherstellen",action:model.useOriginalInstrument)
                         Button("Play pad") { model.preview(assigned: true) }
                         Button("Stop", action: model.stop)
                     }
                     Text(assignmentName).foregroundStyle(.secondary)
+                    layerPanel
                     Button("Reset sample sound: pitch 0 / decay 100", action: model.resetSelectedSample)
-                    GroupBox("Assigned sample: level, pan and tuning — included in TD0 export") {
+                    GroupBox("User-Sample-Parameter · lokal bearbeiten, dann TD0 exportieren") {
                         VStack {
-                            parameter("Level", value: $model.project.zones[model.selectedZone].volumeDB, range: -60...6, suffix: "dB")
-                            parameter("Pan", value: $model.project.zones[model.selectedZone].pan, range: -1...1, suffix: "")
-                            parameter("Pad pitch", value: $model.project.zones[model.selectedZone].semitones, range: -24...24, suffix: "st")
+                            parameter("Level", value: soundValue(\.volumeDB,sub:\.volumeDB), range: -60...6, suffix: "dB")
+                            parameter("Pan", value: Binding(get:{model.project.zones[model.selectedZone].pan},set:{model.project.zones[model.selectedZone].pan = $0; model.project.zones[model.selectedZone].panEdited = true}), range: -1...1, suffix: "")
+                            parameter("Pad pitch", value: soundValue(\.semitones,sub:\.semitones), range: -24...24, suffix: "st")
                             parameter("Inst pitch", value: zoneValue(\.instrumentPitch, default: 0), range: -100...100, suffix: "")
                             parameter("Inst decay", value: zoneValue(\.instrumentDecay, default: 100), range: 1...100, suffix: "%")
                             parameter("Pad decay", value: zoneValue(\.padDecay, default: 100), range: 1...100, suffix: "%")
                             Text("Preview plays WAV + pad pitch/pan/level. Instrument pitch, decay and template effects are module parameters; the preview does not simulate them.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }.padding(6)
-                    }
+                    }.disabled(model.selectedLayer == 0 ? model.project.zones[model.selectedZone].sampleID == nil : model.project.zones[model.selectedZone].sub?.sampleID == nil)
                     }
                 }.padding(.horizontal, 16).frame(minWidth: 530)
                 sourceInspector.frame(minWidth: 200, idealWidth: 230, maxWidth: 320)
+            }
             }
             Text(model.message).font(.callout).textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading).padding(10)
@@ -77,8 +106,7 @@ struct TD27StudioView: View {
         .onDisappear { model.stop() }
     }
     private var assignmentName: String {
-        let id = model.project.zones[model.selectedZone].sampleID
-        return model.project.samples.first(where: { $0.id == id })?.name ?? "Original template instrument (no replacement assigned)"
+        model.assignment(zone:model.selectedZone,sub:model.selectedLayer == 1)
     }
     private var library: some View {
         VStack(alignment: .leading) {
@@ -121,11 +149,11 @@ struct TD27StudioView: View {
                 ForEach(pads.indices, id: \.self) { i in
                     let pad = pads[i]
                     Button {
-                        model.selectedZone = pad.1[0]; showCrossStick = pad.0 == "Snare"
+                        model.selectedZone = pad.1[0]; showCrossStick = false
                     } label: {
                         VStack(spacing: 4) {
                             Text(pad.0).font(.headline)
-                            Text(pad.1.contains(where: { model.project.zones[$0].sampleID != nil }) ? "● assigned" : "○ empty")
+                            Text(model.parsedSource == nil ? "○ kein Kit" : "● Main / Sub")
                                 .font(.caption)
                         }
                         .frame(width: 88, height: 62)
@@ -166,16 +194,52 @@ struct TD27StudioView: View {
                     .font(.caption)
             }
             Divider()
-            Button("Export TD0 with samples…", action: model.exportTD0)
+            Picker("Zielplatz am Modul",selection:Binding(get:{ model.project.targetKitNumber ?? 78 },set:{ model.project.targetKitNumber = $0 })) {
+                ForEach(1...100,id:\.self) { Text("Kit \($0)").tag($0) }
+            }
+            Stepper("SD-Datei: \(model.project.sdFileNumber ?? 1)",value:Binding(get:{model.project.sdFileNumber ?? 1},set:{model.project.sdFileNumber = $0}),in:1...999)
+            Button("SD-Paket + Importanleitung…") {
+                if model.project.targetKitNumber == nil { model.project.targetKitNumber = 78 }
+                model.exportSDPackage()
+            }.disabled(model.parsedSource?.canExportSamples != true)
+            Text("Der Zielplatz wird erst bei 1 KIT LOAD am Modul gewählt. Die Dateinummer erzwingt ihn nicht. Ein belegter Zielplatz wird dort ersetzt — vorher sichern.").font(.caption).foregroundStyle(.orange)
+            Button("Nur TD0 exportieren…", action: model.exportTD0)
                 .disabled(model.parsedSource?.canExportSamples != true)
-            Text("New sample assignments reset both pitch/decay layers. EQ, room, overhead, compression and MFX still come from the base. This is not a fully dry factory initialization. Existing sample data is preserved. No MIDI writes.")
+            Text("Main/Sub einzeln ersetzen. Effekte und unbearbeitete Daten bleiben erhalten. Neue Layer-Exporte sind automatisiert geprüft; ihr Hardwaretest steht noch aus.")
                 .font(.caption).foregroundStyle(.orange)
             Spacer()
         }.padding(10)
     }
+    private func soundValue(_ key: WritableKeyPath<TD27Project.Zone,Double>, sub subKey: WritableKeyPath<TD27Project.SubLayer,Double>) -> Binding<Double> {
+        Binding(get: { model.selectedLayer == 1 ? (model.project.zones[model.selectedZone].sub ?? .init())[keyPath:subKey] : model.project.zones[model.selectedZone][keyPath:key] },set: { value in
+            if model.selectedLayer == 1 {
+                var sub = model.project.zones[model.selectedZone].sub ?? .init()
+                sub[keyPath:subKey] = value; sub.edited = true; model.project.zones[model.selectedZone].sub = sub
+            } else { model.project.zones[model.selectedZone][keyPath:key] = value; model.project.zones[model.selectedZone].mainEdited = true }
+        })
+    }
     private func zoneValue(_ key: WritableKeyPath<TD27Project.Zone, Double?>, default fallback: Double) -> Binding<Double> {
-        Binding(get: { model.project.zones[model.selectedZone][keyPath:key] ?? fallback },
-                set: { model.project.zones[model.selectedZone][keyPath:key] = $0 })
+        let subKey: WritableKeyPath<TD27Project.SubLayer,Double> = key == \.instrumentPitch ? \.instrumentPitch : key == \.instrumentDecay ? \.instrumentDecay : \.padDecay
+        return Binding(get: {
+            model.selectedLayer == 1 ? (model.project.zones[model.selectedZone].sub ?? .init())[keyPath:subKey] : (model.project.zones[model.selectedZone][keyPath:key] ?? fallback)
+        },set: { value in
+            if model.selectedLayer == 1 {
+                var sub = model.project.zones[model.selectedZone].sub ?? .init()
+                sub[keyPath:subKey] = value; sub.edited = true; model.project.zones[model.selectedZone].sub = sub
+            } else { model.project.zones[model.selectedZone][keyPath:key] = value; model.project.zones[model.selectedZone].mainEdited = true }
+        })
+    }
+    private var layerPanel: some View {
+        GroupBox("Main / Sub · Anschlagdynamik") {
+            HStack {
+                Toggle("Sub an",isOn:Binding(get:{model.currentLayerSettings.enabled},set:{value in var layer = model.currentLayerSettings; layer.enabled = value; model.project.zones[model.selectedZone].layer = layer}))
+                Picker("Modus",selection:Binding(get:{model.currentLayerSettings.mode},set:{value in var layer = model.currentLayerSettings; layer.mode = value; model.project.zones[model.selectedZone].layer = layer})) {
+                    ForEach(Array(["MIX","FADE1","FADE2","FADE3","SWITCH"].enumerated()),id:\.offset) { i,name in Text(name).tag(i) }
+                }
+                Stepper("Fade: \(model.currentLayerSettings.fadePoint)",value:Binding(get:{model.currentLayerSettings.fadePoint},set:{value in var layer = model.currentLayerSettings; layer.fadePoint = value; model.project.zones[model.selectedZone].layer = layer}),in:1...159)
+                    .disabled(model.currentLayerSettings.mode == 0)
+            }.font(.caption)
+        }.disabled(model.parsedSource?.canExportSamples != true)
     }
     private var crossStickPanel: some View {
         GroupBox("PD-140DS — Cross-stick") {
@@ -197,7 +261,10 @@ struct TD27StudioView: View {
         HStack {
             Text(title).frame(width: 55, alignment: .leading)
             Slider(value: value, in: range)
-            Text(String(format: "%.1f %@", value.wrappedValue, suffix)).monospacedDigit().frame(width: 80)
+            TextField(title,value:value,format:.number.precision(.fractionLength(0...2)))
+                .textFieldStyle(.roundedBorder).monospacedDigit().frame(width:65)
+            Text(suffix).font(.caption).frame(width:25)
+            if !value.wrappedValue.isFinite || !range.contains(value.wrappedValue) { Text("Bereich!").foregroundStyle(.red) }
         }
     }
 }

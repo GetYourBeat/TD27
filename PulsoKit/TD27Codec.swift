@@ -2,9 +2,10 @@ import Foundation
 import CryptoKit
 
 /// File writer based on 29 observed sample blocks and three independent sample kits.
-/// Hardware import is not yet tested. Requires an original core as a template.
+/// Original sample export has passed a user hardware import. New layering edits need hardware acceptance.
 enum TD27Codec {
     static let vEditMainBase = 0xADC
+    static let vEditSubBase = 0xD1C
     static let vEditStride = 24
     static let mainBase = 0x594
     static let subBase = 0x834
@@ -139,12 +140,11 @@ enum TD27Codec {
             core[81] = UInt8(crossStick.instrument)
             put(Int((crossStick.volumeDB*10).rounded()),in:&core,at:82,bytes:2)
         }
-        for (zoneIndex,zone) in project.zones.enumerated() {
-            if zone.sampleID == nil && project.muteUnassigned == true {
-                put(-600,in:&core,at:mainBase+zoneIndex*28+2,bytes:2)
-                core[commonBase+zoneIndex*40+5] = 0
+        func assignSample(_ id: UUID, zoneIndex: Int, sub: Bool, volume: Double,
+                          semitones: Double, instrumentPitch: Double, decay: Double, padDecay: Double) throws {
+            guard let sample = project.samples.first(where: { $0.id == id }) else {
+                throw TD27File.Failure.invalid("Sample is missing from the project.")
             }
-            guard let id = zone.sampleID, let sample = project.samples.first(where: { $0.id == id }) else { continue }
             if slots[id] == nil, let oldSlot = sample.sourceSlot, let original = existing[oldSlot] {
                 let decoded = try decode(original), wave = try TD27Wave(sample.wav)
                 if decoded.channels == wave.channels && decoded.pcm == pcm16(wave) { slots[id] = oldSlot }
@@ -165,18 +165,43 @@ enum TD27Codec {
                 record[24] = 1 // Same one-shot drum mode seen in the reference drum samples.
                 metadata!.replaceSubrange(48+slot*32..<80+slot*32,with:record)
             }
-            let offset = mainBase+zoneIndex*28, common = commonBase+zoneIndex*40
+            let offset = (sub ? subBase : mainBase)+zoneIndex*28
+            let replacing = core[offset+4] != 1 || u16(core,offset) != slots[id]!
             put(slots[id]!,in:&core,at:offset,bytes:2)
-            put(Int((zone.volumeDB*10).rounded()),in:&core,at:offset+2,bytes:2)
-            core[offset+4] = 1;core[offset+5] = 0;core[offset+10] = 0;core[offset+11] = UInt8((zone.padDecay ?? 100).rounded())
-            put(Int((zone.semitones*100).rounded()),in:&core,at:offset+12,bytes:2);core[offset+14] = 0
-            // User samples also use the independent V-Edit pitch/decay block.
-            // Reset both on assignment: old drum shell/head values must not become sample pitch/decay.
-            let vedit = vEditMainBase+zoneIndex*vEditStride
-            core[vedit] = UInt8(truncatingIfNeeded:Int((zone.instrumentPitch ?? 0).rounded()))
-            core[vedit+1] = UInt8((zone.instrumentDecay ?? 100).rounded())
-            core[common] = UInt8(truncatingIfNeeded:Int((zone.pan*30).rounded()))
-            core[common+5] = 0 // Replaced main sample plays without the original sub-layer.
+            put(Int((volume*10).rounded()),in:&core,at:offset+2,bytes:2)
+            core[offset+4] = 1
+            if replacing { core[offset+5] = 0; core[offset+10] = 0; core[offset+14] = 0 }
+            core[offset+11] = UInt8(padDecay.rounded())
+            put(Int((semitones*100).rounded()),in:&core,at:offset+12,bytes:2)
+            let vedit = (sub ? vEditSubBase : vEditMainBase)+zoneIndex*vEditStride
+            core[vedit] = UInt8(truncatingIfNeeded:Int(instrumentPitch.rounded()))
+            core[vedit+1] = UInt8(decay.rounded())
+        }
+        for (zoneIndex,zone) in project.zones.enumerated() {
+            let common = commonBase+zoneIndex*40
+            if zone.sampleID == nil && project.muteUnassigned == true {
+                put(-600,in:&core,at:mainBase+zoneIndex*28+2,bytes:2)
+                core[common+5] = 0
+            }
+            if let id = zone.sampleID, zone.mainEdited != false {
+                try assignSample(id, zoneIndex:zoneIndex, sub:false, volume:zone.volumeDB,
+                    semitones:zone.semitones, instrumentPitch:zone.instrumentPitch ?? 0,
+                    decay:zone.instrumentDecay ?? 100, padDecay:zone.padDecay ?? 100)
+                core[common] = UInt8(truncatingIfNeeded:Int((zone.pan*30).rounded()))
+                // Legacy projects disabled the sub layer. New projects explicitly preserve/control it.
+                if zone.layer == nil { core[common+5] = 0 }
+            }
+            if let sub = zone.sub, sub.edited, let id = sub.sampleID {
+                try assignSample(id, zoneIndex:zoneIndex, sub:true, volume:sub.volumeDB,
+                    semitones:sub.semitones, instrumentPitch:sub.instrumentPitch,
+                    decay:sub.instrumentDecay, padDecay:sub.padDecay)
+            }
+            if zone.panEdited == true { core[common] = UInt8(truncatingIfNeeded:Int((zone.pan*30).rounded())) }
+            if let layer = zone.layer {
+                core[common+5] = layer.enabled ? 1 : 0
+                core[common+6] = UInt8(layer.mode)
+                put(layer.fadePoint,in:&core,at:common+8,bytes:2)
+            }
         }
         if !existing.isEmpty { core[40] = 1;core[41] = 1 }
         core.replaceSubrange(4240..<4256,with:Data(Insecure.MD5.hash(data:core.prefix(4240))))

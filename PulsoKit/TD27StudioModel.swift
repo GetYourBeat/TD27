@@ -7,8 +7,19 @@ import UniformTypeIdentifiers
 final class TD27StudioModel: ObservableObject {
     @Published var project = TD27Project()
     @Published var selectedZone = 0
+    @Published var selectedLayer = 0 // Main / Sub
+    struct LibraryKit: Identifiable {
+        let url: URL
+        let name: String
+        let version: String
+        let sampleCount: Int
+        var id: URL { url }
+    }
+    @Published var kitLibrary: [LibraryKit] = []
+    @Published var selectedLibraryKit: URL?
+
     @Published var selectedSample: UUID?
-    @Published var message = "TD-27 Studio v3 — neutral sample pitch/decay. Updated export needs a hardware test."
+    @Published var message = "TD-27 Studio v3.1 · Kit-Browser, Main/Sub und SD-Export"
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private let pitch = AVAudioUnitTimePitch()
@@ -92,24 +103,62 @@ final class TD27StudioModel: ObservableObject {
     }
     func assign() {
         guard let id = selectedSample, project.samples.contains(where: { $0.id == id }) else { return }
-        project.zones[selectedZone].sampleID = id
-        project.zones[selectedZone].semitones = 0
-        project.zones[selectedZone].instrumentPitch = 0
-        project.zones[selectedZone].instrumentDecay = 100
-        project.zones[selectedZone].padDecay = 100
-        message = "Assigned to the main instrument. TD0 export replaces this zone and disables its previous sub-layer."
+        if selectedLayer == 1 {
+            project.zones[selectedZone].sub = .init(sampleID:id,edited:true)
+            var layer = currentLayerSettings
+            layer.enabled = true
+            project.zones[selectedZone].layer = layer
+        } else {
+            // Replacing Main preserves the existing Sub and its layer behavior.
+            if project.zones[selectedZone].layer == nil { project.zones[selectedZone].layer = currentLayerSettings }
+            project.zones[selectedZone].sampleID = id
+            project.zones[selectedZone].mainEdited = true
+            resetSelectedSample()
+        }
+        message = "Sample zugeordnet. Änderungen bleiben lokal bis zum TD0-Export. Main und Sub sind getrennt."
+    }
+    func useOriginalInstrument() {
+        if selectedLayer == 0 {
+            project.zones[selectedZone].sampleID = nil
+            project.zones[selectedZone].mainEdited = false
+        } else { project.zones[selectedZone].sub = nil }
+        message = "Originale Zuordnung und Parameter dieser Ebene werden beim Export beibehalten."
+    }
+    var currentLayerSettings: TD27Project.LayerSettings {
+        if let layer = project.zones[selectedZone].layer { return layer }
+        guard let f = parsedSource else { return .init(enabled:false,mode:0,fadePoint:50) }
+        let at = TD27Codec.commonBase + f.bodyOffset-48 + selectedZone*40
+        return .init(enabled:f.bytes[at+5] == 1, mode:Int(f.bytes[at+6]), fadePoint:TD27Codec.u16(f.bytes,at+8))
+    }
+    func sourceAssignment(zone: Int, sub: Bool) -> String {
+        guard let file = parsedSource else { return "Keine Kitdatei geladen" }
+        let offset = (sub ? TD27Codec.subBase : TD27Codec.mainBase) + file.bodyOffset-48 + zone*28
+        let number = TD27Codec.u16(file.bytes,offset), bank = file.bytes[offset+4]
+        if bank == 1 {
+            let label = file.sampleNames.indices.contains(number) ? file.sampleNames[number] : "Audio nicht eingebettet"
+            return String(format:"U%03d",number+1) + " · " + label
+        }
+        if bank == 0 { return String(format:"%03d",number) + " · " + (TD27InstrumentNames.names[number] ?? "Werksinstrument") }
+        return "Unbekannte Bank \(bank), ID \(number)"
+    }
+    func assignment(zone: Int, sub: Bool) -> String {
+        let id = sub ? project.zones[zone].sub?.sampleID : project.zones[zone].sampleID
+        return project.samples.first(where: { $0.id == id })?.name ?? sourceAssignment(zone:zone,sub:sub)
     }
     func removeSample() {
         guard let id = selectedSample else { return }
         stop()
         project.samples.removeAll { $0.id == id }
-        for i in project.zones.indices where project.zones[i].sampleID == id { project.zones[i].sampleID = nil }
+        for i in project.zones.indices {
+            if project.zones[i].sampleID == id { project.zones[i].sampleID = nil; project.zones[i].mainEdited = false }
+            if project.zones[i].sub?.sampleID == id { project.zones[i].sub = nil }
+        }
         selectedSample = nil
     }
     func preview(assigned: Bool) {
         run {
             let zone = project.zones[selectedZone]
-            let id = assigned ? zone.sampleID : selectedSample
+            let id = assigned ? (selectedLayer == 1 ? zone.sub?.sampleID : zone.sampleID) : selectedSample
             guard let sample = project.samples.first(where: { $0.id == id }) else { return }
             stop()
             let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
@@ -119,9 +168,9 @@ final class TD27StudioModel: ObservableObject {
             engine.disconnectNodeOutput(player); engine.disconnectNodeOutput(pitch)
             engine.connect(player, to: pitch, format: file.processingFormat)
             engine.connect(pitch, to: engine.mainMixerNode, format: file.processingFormat)
-            player.volume = assigned ? Float(pow(10, zone.volumeDB/20)) : 1
+            player.volume = assigned ? Float(pow(10, (selectedLayer == 1 ? (zone.sub?.volumeDB ?? 0) : zone.volumeDB)/20)) : 1
             player.pan = assigned ? Float(zone.pan) : 0
-            pitch.pitch = assigned ? Float(zone.semitones*100) : 0
+            pitch.pitch = assigned ? Float((selectedLayer == 1 ? (zone.sub?.semitones ?? 0) : zone.semitones)*100) : 0
             player.scheduleFile(file, at: nil)
             try engine.start(); player.play()
         }
@@ -187,6 +236,13 @@ final class TD27StudioModel: ObservableObject {
                      volumeDB: max(-60,min(6,Double(Int16(bitPattern:UInt16(TD27Codec.u16(file.bytes,start+34))))/10)))
     }
     func resetSelectedSample() {
+        if selectedLayer == 1 {
+            var sub = project.zones[selectedZone].sub ?? .init()
+            sub.semitones = 0; sub.instrumentPitch = 0; sub.instrumentDecay = 100; sub.padDecay = 100; sub.edited = true
+            project.zones[selectedZone].sub = sub
+            return
+        }
+        project.zones[selectedZone].mainEdited = true
         project.zones[selectedZone].semitones = 0
         project.zones[selectedZone].instrumentPitch = 0
         project.zones[selectedZone].instrumentDecay = 100
@@ -203,26 +259,38 @@ final class TD27StudioModel: ObservableObject {
         var next = TD27Project(); next.sourceTD0 = data; next.title = file.kitName
         let blocks = try TD27Codec.blocks(file)
         var ids: [Int:UUID] = [:]
+        for slot in blocks.keys.sorted() {
+            let sample = TD27Project.Sample(name:file.sampleNames[slot],wav:TD27Codec.wav(try TD27Codec.decode(blocks[slot]!)),sourceSlot:slot)
+            next.samples.append(sample); ids[slot] = sample.id
+        }
         if file.canExportSamples {
             for z in next.zones.indices {
                 let offset = TD27Codec.mainBase+z*28, slot = TD27Codec.u16(data,offset)
-                guard data[offset+4] == 1, let block = blocks[slot] else { continue }
-                if ids[slot] == nil {
-                    let sample = TD27Project.Sample(name:file.sampleNames[slot],wav:TD27Codec.wav(try TD27Codec.decode(block)),sourceSlot:slot)
-                    next.samples.append(sample); ids[slot] = sample.id
+                next.zones[z].mainEdited = false
+                if data[offset+4] == 1, let id = ids[slot] {
+                    next.zones[z].sampleID = id
+                    next.zones[z].volumeDB = max(-60,min(6,Double(Int16(bitPattern:UInt16(TD27Codec.u16(data,offset+2))))/10))
+                    next.zones[z].semitones = max(-24,min(24,Double(Int16(bitPattern:UInt16(TD27Codec.u16(data,offset+12))))/100))
+                    next.zones[z].pan = max(-1,min(1,Double(Int8(bitPattern:data[TD27Codec.commonBase+z*40]))/30))
+                    next.zones[z].padDecay = Double(max(1,min(100,Int(data[offset+11]))))
+                    let vedit = TD27Codec.vEditMainBase+z*TD27Codec.vEditStride
+                    next.zones[z].instrumentPitch = Double(max(-100,min(100,Int(Int8(bitPattern:data[vedit])))))
+                    next.zones[z].instrumentDecay = Double(max(1,min(100,Int(data[vedit+1]))))
                 }
-                next.zones[z].sampleID = ids[slot]
-                next.zones[z].volumeDB = max(-60,min(6,Double(Int16(bitPattern:UInt16(TD27Codec.u16(data,offset+2))))/10))
-                next.zones[z].semitones = max(-24,min(24,Double(Int16(bitPattern:UInt16(TD27Codec.u16(data,offset+12))))/100))
-                next.zones[z].pan = max(-1,min(1,Double(Int8(bitPattern:data[TD27Codec.commonBase+z*40]))/30))
-                next.zones[z].padDecay = Double(max(1,min(100,Int(data[offset+11]))))
-                let vedit = TD27Codec.vEditMainBase+z*TD27Codec.vEditStride
-                next.zones[z].instrumentPitch = Double(max(-100,min(100,Int(Int8(bitPattern:data[vedit])))))
-                next.zones[z].instrumentDecay = Double(max(1,min(100,Int(data[vedit+1]))))
+                let sub = TD27Codec.subBase+z*28, subSlot = TD27Codec.u16(data,sub)
+                if data[sub+4] == 1, let id = ids[subSlot] {
+                    let vedit = TD27Codec.vEditSubBase+z*24
+                    next.zones[z].sub = .init(sampleID:id,
+                        volumeDB:max(-60,min(6,Double(Int16(bitPattern:UInt16(TD27Codec.u16(data,sub+2))))/10)),
+                        semitones:max(-24,min(24,Double(Int16(bitPattern:UInt16(TD27Codec.u16(data,sub+12))))/100)),
+                        instrumentPitch:Double(max(-100,min(100,Int(Int8(bitPattern:data[vedit]))))),
+                        instrumentDecay:Double(max(1,min(100,Int(data[vedit+1])))),
+                        padDecay:Double(max(1,min(100,Int(data[sub+11])))),edited:false)
+                }
             }
         }
-        stop(); project = try next.validated(); selectedZone = 0; selectedSample = nil
-        message = file.canExportSamples ? "Kit opened with referenced user samples and stored parameters. Use Reset sample sound to remove inherited pitch/decay." : "2.21 kit inspected and checksum verified. Exact-copy saving is supported; sample export requires a 1.01/1.02 base."
+        stop(); project = try next.validated(); selectedZone = 0; selectedLayer = 0; selectedSample = nil
+        message = file.canExportSamples ? "Kit vollständig aus TD0 geladen. Main/Sub und alle eingebetteten Samples verfügbar. Unbearbeitete Bereiche bleiben unverändert." : "2.21 kit inspected and checksum verified. Exact-copy saving is supported; sample export requires a 1.01/1.02 base."
     }
     func openTD0() {
         let panel = NSOpenPanel(); panel.allowsMultipleSelection = false
@@ -240,8 +308,8 @@ final class TD27StudioModel: ObservableObject {
     func exportTD0() {
         run {
             let output = try TD27Codec.export(project)
-            let panel = NSSavePanel(); panel.title = "TD-27 Studio v3 export — updated parameter handling"
-            panel.nameFieldStringValue = "KIT-001.TD0"
+            let panel = NSSavePanel(); panel.title = "TD-27 Studio v3.1 — vollständiges Kit exportieren"
+            panel.nameFieldStringValue = String(format:"KIT-%03d.TD0",project.sdFileNumber ?? 1)
             panel.allowedContentTypes = [UTType(filenameExtension: "TD0") ?? .data]
             guard panel.runModal() == .OK, let url = panel.url else { return }
             guard url.pathExtension.lowercased() == "td0" else { throw TD27File.Failure.invalid("Use .TD0 for kit export.") }
@@ -249,7 +317,7 @@ final class TD27StudioModel: ObservableObject {
             let saved = try Data(contentsOf: url)
             guard saved == output else { throw TD27File.Failure.invalid("Saved bytes differ from export.") }
             _ = try TD27Codec.blocks(TD27File(saved))
-            message = "TD0 saved with assigned WAVs and verified by re-reading. The updated parameter handling still needs a hardware test. Original file was not overwritten."
+            message = "TD0 mit eingebetteten Samples gespeichert und zurückgelesen. Am Modul 1 KIT LOAD, With User Sample aktivieren und den Zielplatz bewusst wählen. Die Dateinummer legt den Zielplatz NICHT fest."
         }
     }
     func extractSourceSamples() {
@@ -257,10 +325,10 @@ final class TD27StudioModel: ObservableObject {
             guard let file = parsedSource else { return }
             let blocks = try TD27Codec.blocks(file)
             var next = project
-            for slot in blocks.keys.sorted() {
+            for slot in blocks.keys.sorted() where !next.samples.contains(where: { $0.sourceSlot == slot }) {
                 let audio = try TD27Codec.decode(blocks[slot]!)
                 let label = file.sampleNames[slot]
-                next.samples.append(TD27Project.Sample(name: label, wav: TD27Codec.wav(audio)))
+                next.samples.append(TD27Project.Sample(name: label, wav: TD27Codec.wav(audio), sourceSlot:slot))
             }
             project = try next.validated()
             message = "Extracted \(blocks.count) embedded samples as WAVs for preview and reassignment."
@@ -278,6 +346,10 @@ final class TD27StudioModel: ObservableObject {
             guard try Data(contentsOf: url) == source else { throw TD27File.Failure.invalid("Copy verification failed.") }
             message = "Exact original copy saved. Draft edits and imported WAVs are NOT included."
         }
+    }
+    func loadLibraryURL(_ url: URL) {
+        guard confirmReplacement() else { return }
+        run { try loadKit(readBounded(url,limit:256*1024*1024)) }
     }
     private func confirmReplacement() -> Bool {
         if project.sourceTD0 == nil && project.samples.isEmpty && project.title == "New TD-27 kit" { return true }

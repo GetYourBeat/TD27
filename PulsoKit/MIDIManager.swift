@@ -1044,7 +1044,7 @@ final class MIDIManager: ObservableObject {
     }
 
     var isOperationInProgress: Bool {
-        isBusyWithSysEx || isAuditioningKit || usbTestTask != nil
+        isBusyWithSysEx || isAuditioningKit || usbTestTask != nil || td27BrowserTask != nil
     }
 
     /// Czy wolno rozpocząć pojedyncze przywrócenie z kopii.
@@ -1295,6 +1295,7 @@ final class MIDIManager: ObservableObject {
             initialReadTask?.cancel()
             probeTask?.cancel()
             usbTestTask?.cancel()
+            td27BrowserTask?.cancel()
             needsKitReconcile = false
             kitListProgress = 0
         }
@@ -1792,6 +1793,7 @@ final class MIDIManager: ObservableObject {
     /// z nich trwa. Zostawiona flaga blokuje cały program.
     func cancelProbe() {
         usbTestTask?.cancel()
+            td27BrowserTask?.cancel()
         probeTask?.cancel()
         probeTask = nil
         setupDumpActive = false
@@ -1867,6 +1869,114 @@ final class MIDIManager: ObservableObject {
             }
             self.status = self.connectionDiagnostic
             self.appendLog("DIAGNOSTIC: \(self.connectionDiagnostic)")
+        }
+    }
+
+    @Published private(set) var td27KitNames: [TD27KitBrowser.KitName] = []
+    @Published private(set) var td27KitSnapshot: TD27KitBrowser.Snapshot?
+    @Published private(set) var td27BrowserStatus = "USB: noch kein Kit gelesen"
+    @Published private(set) var td27BrowserBusy = false
+    private var td27BrowserTask: Task<Void, Never>?
+
+    func cancelTD27Browser() { td27BrowserTask?.cancel() }
+    func readTD27KitNames() { runTD27Browser(kit: nil) }
+    func readTD27Kit(_ number: Int) { runTD27Browser(kit: number) }
+
+    private func runTD27Browser(kit: Int?) {
+        guard kit == nil || (1...100).contains(kit!), profile.kind == .td27,
+              !isOperationInProgress, let input = selectedInputID, let output = selectedOutputID,
+              connectedInput != nil,
+              inputs.first(where: { $0.id == input })?.name.localizedCaseInsensitiveContains("TD-27") == true,
+              outputs.first(where: { $0.id == output })?.name.localizedCaseInsensitiveContains("TD-27") == true else {
+            td27BrowserStatus = "TD-27 als Eingang und Ausgang wählen; laufende Operation abwarten."
+            return
+        }
+        td27BrowserBusy = true
+        isDumpingSetup = true; setupDumpActive = true; usbTestIdentityID = nil
+        td27BrowserStatus = "Verbindung wird geprüft…"
+        // Do not leave a stale source kit displayed while a new selection is loading.
+        if kit != nil { td27KitSnapshot = nil }
+        td27BrowserTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.diagnosticAddress = nil; self.diagnosticData = nil
+                self.setupDumpActive = false; self.isDumpingSetup = false
+                self.td27BrowserBusy = false; self.td27BrowserTask = nil
+            }
+            @MainActor func connected() throws {
+                try Task.checkCancellation()
+                guard self.profile.kind == .td27, self.selectedInputID == input,
+                      self.selectedOutputID == output, self.connectedInput != nil else {
+                    throw USBTestError(message:"Verbindung geändert. Ansicht neu laden.")
+                }
+            }
+            @MainActor func read(_ number: Int, _ offset: Int, _ count: Int) async throws -> [UInt8] {
+                try connected()
+                guard let address = TD27KitBrowser.address(kit:number, offset:offset) else {
+                    throw USBTestError(message:"Ungültige Kitadresse.")
+                }
+                self.diagnosticAddress = address; self.diagnosticData = nil
+                self.sendRQ1(address:address, size:[0,0,0,UInt8(count)])
+                guard !self.lastSendFailed else { throw USBTestError(message:"MIDI-Anfrage fehlgeschlagen.") }
+                for _ in 0..<40 {
+                    try await Task.sleep(for:.milliseconds(50)); try connected()
+                    if let bytes = self.diagnosticData {
+                        guard bytes.count == count else { throw USBTestError(message:"Unvollständige Antwort für Kit \(number).") }
+                        return bytes
+                    }
+                }
+                throw USBTestError(message:"Keine Antwort für Kit \(number). Keine Daten ersetzt; erneut lesen.")
+            }
+            do {
+                self.sendSysEx([0xF0,0x7E,0x7F,0x06,0x01,0xF7])
+                for _ in 0..<40 {
+                    try await Task.sleep(for:.milliseconds(50)); try connected()
+                    if self.usbTestIdentityID != nil { break }
+                }
+                guard let device = self.usbTestIdentityID else { throw USBTestError(message:"Keine TD-27-Identität empfangen.") }
+                self.moduleDeviceID = device
+                if let kit {
+                    let name = try TD27KitBrowser.name(await read(kit,0,12))
+                    var zones: [TD27KitBrowser.Zone] = []
+                    for index in 0..<24 {
+                        self.td27BrowserStatus = "Kit \(kit) · \(name): Zone \(index+1)/24"
+                        let main = try TD27KitBrowser.instrument(await read(kit,0x40*128+index*128,25))
+                        let sub = try TD27KitBrowser.instrument(await read(kit,0x60*128+index*128,25))
+                        let common = try await read(kit,0x20*128+index*128,42)
+                        let mainV = try await read(kit,16384+index*128,33)
+                        let subV = try await read(kit,16384+0x20*128+index*128,33)
+                        zones.append(.init(index:index,main:main,sub:sub,common:common,mainVEdit:mainV,subVEdit:subV))
+                    }
+                    // Re-read every block: do not combine two states if the module was edited mid-read.
+                    self.td27BrowserStatus = "Kit \(kit): Belegungen werden erneut geprüft…"
+                    for zone in zones {
+                        let i = zone.index
+                        guard try await read(kit,0x40*128+i*128,25) == zone.main.raw,
+                              try await read(kit,0x60*128+i*128,25) == zone.sub.raw,
+                              try await read(kit,0x20*128+i*128,42) == zone.common,
+                              try await read(kit,16384+i*128,33) == zone.mainVEdit,
+                              try await read(kit,16384+0x20*128+i*128,33) == zone.subVEdit else {
+                            throw USBTestError(message:"Kit während des Lesens geändert. Bitte erneut lesen.")
+                        }
+                    }
+                    guard try TD27KitBrowser.name(await read(kit,0,12)) == name else {
+                        throw USBTestError(message:"Kitname während des Lesens geändert. Bitte erneut lesen.")
+                    }
+                    self.td27KitSnapshot = .init(kitNumber:kit,name:name,zones:zones,date:Date())
+                    self.td27BrowserStatus = "Kit \(kit) · \(name): 24 Zonen mit Main/Sub gelesen und erneut geprüft. Audio und globale Effekte: über TD0 laden."
+                } else {
+                    var names: [TD27KitBrowser.KitName] = []
+                    for number in 1...100 {
+                        self.td27BrowserStatus = "Kitnamen lesen: \(number)/100"
+                        let name = try TD27KitBrowser.name(await read(number,0,12))
+                        names.append(.init(number:number,name:name))
+                    }
+                    self.td27KitNames = names
+                    self.td27BrowserStatus = "100 Kitnamen gelesen. Quelle auswählen und Belegung lesen."
+                }
+            } catch {
+                self.td27BrowserStatus = error is CancellationError ? "Lesen abgebrochen." : error.localizedDescription
+            }
         }
     }
 
