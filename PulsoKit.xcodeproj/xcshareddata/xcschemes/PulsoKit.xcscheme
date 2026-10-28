@@ -31,6 +31,9 @@
          <TestableReference skipped="NO">
             <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="2FFE90523019F14200338A6E" BuildableName="PulsoKitTests.xctest" BlueprintName="PulsoKitTests" ReferencedContainer="container:PulsoKit.xcodeproj"/>
          </TestableReference>
+         <TestableReference skipped="NO">
+            <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="2FFE905C3019F14200338A6E" BuildableName="PulsoKitUITests.xctest" BlueprintName="PulsoKitUITests" ReferencedContainer="container:PulsoKit.xcodeproj"/>
+         </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction

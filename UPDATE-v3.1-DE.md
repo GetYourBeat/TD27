@@ -50,4 +50,6 @@ Zielplatz nicht als frei garantieren. Es erfolgt kein automatischer Hardwarewrit
   Schreibtests sowie Wiederherstellungen waren am Modul erfolgreich.
 - Vorschau spielt eine WAV mit Pad-Pitch/Pan/Pegel, keine Roland-Modellierung und
   keine Simulation der kompletten Velocity-Layer, Effekte oder Instrument-Decay.
+- Layer-Modi gelten für die ältere TD0-Struktur. Moderne XFADE-/Fade-End-Parameter
+  sind nicht implementiert; FADE2/FADE3 werden ausdrücklich als legacy angezeigt.
 - Recherche mit Quellen: Research/TD27-SAMPLES-AND-WORKFLOW-v3.1.md.

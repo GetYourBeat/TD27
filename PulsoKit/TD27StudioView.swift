@@ -230,11 +230,11 @@ struct TD27StudioView: View {
         })
     }
     private var layerPanel: some View {
-        GroupBox("Main / Sub · Anschlagdynamik") {
+        GroupBox("Main / Sub · TD0 1.01/1.02 Layer-Modus") {
             HStack {
                 Toggle("Sub an",isOn:Binding(get:{model.currentLayerSettings.enabled},set:{value in var layer = model.currentLayerSettings; layer.enabled = value; model.project.zones[model.selectedZone].layer = layer}))
                 Picker("Modus",selection:Binding(get:{model.currentLayerSettings.mode},set:{value in var layer = model.currentLayerSettings; layer.mode = value; model.project.zones[model.selectedZone].layer = layer})) {
-                    ForEach(Array(["MIX","FADE1","FADE2","FADE3","SWITCH"].enumerated()),id:\.offset) { i,name in Text(name).tag(i) }
+                    ForEach(Array(["MIX","FADE1","FADE2 (legacy)","FADE3 (legacy)","SWITCH"].enumerated()),id:\.offset) { i,name in Text(name).tag(i) }
                 }
                 Stepper("Fade: \(model.currentLayerSettings.fadePoint)",value:Binding(get:{model.currentLayerSettings.fadePoint},set:{value in var layer = model.currentLayerSettings; layer.fadePoint = value; model.project.zones[model.selectedZone].layer = layer}),in:1...159)
                     .disabled(model.currentLayerSettings.mode == 0)

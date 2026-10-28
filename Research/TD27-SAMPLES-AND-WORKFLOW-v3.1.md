@@ -26,6 +26,15 @@ instruments can be combined with imported user audio. This gives two selectable
 sounds per zone, not an arbitrary stack of velocity WAV layers.
 https://static.roland.com/assets/media/pdf/TD-27_Data_List_eng02_W.pdf
 
+The current official Data List eng04 (retrieved 2026-10-28 from Roland's owner
+manuals page) documents MIX, FADE1, FADE2, XFADE and a separate Fade End. The app's
+1.01/1.02 writer uses the legacy layout, labels its fade modes accordingly and does
+not invent a new-format Fade End offset or relabel old mode 3 as XFADE. Modern
+XFADE/Fade End editing is not included. Their exact file mapping needs reference
+captures. Legacy-kit conversion on import is performed by the module; its result
+must be checked on the user's firmware.
+https://static.roland.com/assets/media/pdf/TD-27_Data_List_eng04_W.pdf
+
 Roland Support, updated 2025-01-07: WAV import uses the SD IMPORT directory,
 44.1 kHz and 16/24 bits. No supported bulk WAV upload/download command over USB
 was found. USB audio streaming is distinct from copying a sample into user memory.
